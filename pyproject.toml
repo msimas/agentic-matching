@@ -1,0 +1,37 @@
+[project]
+name = "agentic-matching"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Marcelo Simas", email = "msimas@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "duckdb>=1.5.5",
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "openai>=2.53.0",
+    "pandas>=3.0.5",
+    "pyarrow>=25.0.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.2",
+    "scipy>=1.17.1",
+    "splink>=4.0.16",
+    "typer>=0.27.1",
+]
+
+[project.scripts]
+agentic-matching = "agentic_matching:main"
+
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -10,3 +10,4 @@ data/artifacts/
 data/food.parquet
 .env
 *.log
+.tmp

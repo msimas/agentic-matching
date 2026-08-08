@@ -1,0 +1,165 @@
+[
+  {
+    "name": "bean_type",
+    "kind": "categorical",
+    "description": "Variety of bean",
+    "categories": {
+      "black": {
+        "fndds_keywords": [
+          "black bean"
+        ],
+        "off_keywords": [
+          "black bean",
+          "haricot noir"
+        ]
+      },
+      "pinto": {
+        "fndds_keywords": [
+          "pinto"
+        ],
+        "off_keywords": [
+          "pinto"
+        ]
+      },
+      "kidney": {
+        "fndds_keywords": [
+          "kidney"
+        ],
+        "off_keywords": [
+          "kidney"
+        ]
+      },
+      "navy": {
+        "fndds_keywords": [
+          "navy bean",
+          "white bean"
+        ],
+        "off_keywords": [
+          "navy bean",
+          "white bean"
+        ]
+      },
+      "garbanzo": {
+        "fndds_keywords": [
+          "garbanzo",
+          "chickpea"
+        ],
+        "off_keywords": [
+          "garbanzo",
+          "chickpea",
+          "pois chiche"
+        ]
+      },
+      "lima": {
+        "fndds_keywords": [
+          "lima"
+        ],
+        "off_keywords": [
+          "lima"
+        ]
+      },
+      "refried": {
+        "fndds_keywords": [
+          "refried"
+        ],
+        "off_keywords": [
+          "refried",
+          "refritos"
+        ]
+      },
+      "lentil": {
+        "fndds_keywords": [
+          "lentil"
+        ],
+        "off_keywords": [
+          "lentil",
+          "lentille"
+        ]
+      }
+    }
+  },
+  {
+    "name": "is_canned",
+    "kind": "boolean",
+    "description": "Is this a canned/shelf-stable prepared product?",
+    "fndds_keywords": [
+      "canned",
+      "from canned"
+    ],
+    "off_keywords": [
+      "canned",
+      "can ",
+      "boite",
+      "tin"
+    ]
+  },
+  {
+    "name": "is_dried",
+    "kind": "boolean",
+    "description": "Is this a dried/dry bean product (vs. prepared/ready-to-eat)?",
+    "fndds_keywords": [
+      "dried",
+      "from dried",
+      "dry"
+    ],
+    "off_keywords": [
+      "dried",
+      "dry",
+      "sec"
+    ]
+  },
+  {
+    "name": "is_seasoned",
+    "kind": "boolean",
+    "description": "Is this seasoned/flavored (vs. plain)?",
+    "fndds_keywords": [
+      "seasoned",
+      "spicy",
+      "chili",
+      "flavored"
+    ],
+    "off_keywords": [
+      "seasoned",
+      "spicy",
+      "chili",
+      "flavored",
+      "epice"
+    ]
+  },
+  {
+    "name": "sodium_level",
+    "kind": "categorical",
+    "description": "Sodium content tier",
+    "categories": {
+      "low_sodium": {
+        "fndds_keywords": [
+          "low sodium",
+          "no salt",
+          "reduced sodium"
+        ],
+        "off_keywords": [
+          "low sodium",
+          "no salt",
+          "reduced sodium",
+          "sans sel"
+        ]
+      },
+      "regular": {
+        "fndds_keywords": [],
+        "off_keywords": []
+      }
+    }
+  },
+  {
+    "name": "is_organic",
+    "kind": "boolean",
+    "description": "Is this labeled organic?",
+    "fndds_keywords": [
+      "organic"
+    ],
+    "off_keywords": [
+      "organic",
+      "bio"
+    ]
+  }
+]
