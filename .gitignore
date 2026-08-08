@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+data/raw/
+data/parquet/
+data/fdc.duckdb
+data/calibration/
+data/blocks/
+data/artifacts/
+data/food.parquet
+.env
+*.log
