@@ -2,14 +2,17 @@
   {
     "name": "vegetable_type",
     "kind": "categorical",
-    "description": "A categorical attribute that identifies the specific vegetable used in the breaded vegetable product, grounded in the actual vegetable names present in the block's samples. Categories are derived from candidate terms with non-zero frequency on both sides, ensuring real-world presence in the data.",
+    "description": "A categorical attribute that explicitly identifies the specific vegetable used in the product, grounded in the actual terms observed in both FNDDS and OFF records within this block. This attribute replaces generic preparation-style indicators (like 'fried' or 'vegetable') because true matches must agree on the specific vegetable identity\u2014e.g., 'onion' vs. 'broccoli'. The categories are derived directly from the candidate_terms and sample pairs, ensuring real-world specificity and avoiding overgeneralization.",
     "categories": {
       "onion": {
         "fndds_keywords": [
-          "onion"
+          "onion",
+          "onion rings"
         ],
         "off_keywords": [
-          "onion"
+          "onion",
+          "onion rings",
+          "onion rings"
         ]
       },
       "cauliflower": {
@@ -17,17 +20,19 @@
           "cauliflower"
         ],
         "off_keywords": [
-          "cauliflower"
+          "cauliflower",
+          "cauliflower tempura",
+          "cauliflower fritters"
         ]
       },
-      "green_beans": {
+      "broccoli": {
         "fndds_keywords": [
-          "green beans",
-          "green bean"
+          "broccoli"
         ],
         "off_keywords": [
-          "green beans",
-          "green bean"
+          "broccoli",
+          "broccoli tempura",
+          "broccoli fritters"
         ]
       },
       "squash": {
@@ -43,19 +48,39 @@
       "tomato": {
         "fndds_keywords": [
           "tomato",
-          "tomatoes"
+          "green tomatoes"
         ],
         "off_keywords": [
           "tomato",
-          "tomatoes"
+          "green tomatoes",
+          "tomato rings"
         ]
       },
-      "broccoli": {
+      "green_beans": {
         "fndds_keywords": [
-          "broccoli"
+          "green beans"
         ],
         "off_keywords": [
-          "broccoli"
+          "green beans",
+          "green bean fritters"
+        ]
+      },
+      "eggplant": {
+        "fndds_keywords": [
+          "eggplant"
+        ],
+        "off_keywords": [
+          "eggplant",
+          "eggplant tempura"
+        ]
+      },
+      "okra": {
+        "fndds_keywords": [
+          "okra"
+        ],
+        "off_keywords": [
+          "okra",
+          "okra fritters"
         ]
       }
     }

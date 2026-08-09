@@ -1,86 +1,86 @@
 [
   {
-    "name": "has_onion_rings_variant",
-    "kind": "boolean",
-    "description": "Detects products that contain 'onion rings' or 'onion ring' in either name or description, including variants like 'onion ring chips' or 'onion rings flavour', to capture a broad range of onion-based fried products.",
-    "fndds_keywords": [
-      "onion rings",
-      "onion ring",
-      "onion ring chips"
-    ],
-    "off_keywords": [
-      "onion rings",
-      "onion ring",
-      "onion ring chips"
-    ]
-  },
-  {
-    "name": "has_sweet_potato_base",
-    "kind": "boolean",
-    "description": "Identifies products where 'sweet potato' is present in the description or name, indicating a specific vegetable base that distinguishes them from other fried vegetable products.",
-    "fndds_keywords": [
-      "sweet potato"
-    ],
-    "off_keywords": [
-      "sweet",
-      "potato"
-    ]
-  },
-  {
-    "name": "has_tempura_fry_method",
-    "kind": "boolean",
-    "description": "Flags products that mention 'tempura' in either side, indicating a distinct frying method (e.g., vegetable tempura), which differentiates from deep-fried or breaded products.",
-    "fndds_keywords": [
-      "tempura"
-    ],
-    "off_keywords": [
-      "tempura"
-    ]
-  },
-  {
-    "name": "is_fried_green_vegetable",
-    "kind": "boolean",
-    "description": "Detects products involving green vegetables (e.g., green beans, green tomatoes) that are fried, distinguishing them from other types of fried vegetables.",
-    "fndds_keywords": [
-      "fried green beans",
-      "fried green tomatoes",
-      "green beans",
-      "green tomatoes"
-    ],
-    "off_keywords": [
-      "green beans",
-      "green tomatoes",
-      "green"
-    ]
-  },
-  {
-    "name": "is_frozen_product",
-    "kind": "boolean",
-    "description": "Flags products that are explicitly described as frozen, which is common in fast-food or pre-processed breaded vegetable items.",
-    "fndds_keywords": [
-      "frozen"
-    ],
-    "off_keywords": [
-      "frozen"
-    ]
-  },
-  {
-    "name": "has_breaded_vegetable_tag",
+    "name": "vegetable_type",
     "kind": "categorical",
-    "description": "Categorizes products based on whether they are tagged as breaded vegetables in Open Food Facts, which is a strong indicator of product type.",
+    "description": "A categorical attribute that explicitly identifies the specific vegetable used in the product, grounded in the actual terms observed in both FNDDS and OFF records within this block. This attribute replaces generic preparation-style indicators (like 'fried' or 'vegetable') because true matches must agree on the specific vegetable identity\u2014e.g., 'onion' vs. 'broccoli'. The categories are derived directly from the candidate_terms and sample pairs, ensuring real-world specificity and avoiding overgeneralization.",
     "categories": {
-      "breaded_vegetable": {
-        "fndds_keywords": [],
+      "onion": {
+        "fndds_keywords": [
+          "onion",
+          "onion rings"
+        ],
         "off_keywords": [
-          "en:breaded-products"
+          "onion",
+          "onion rings",
+          "onion rings"
         ]
       },
-      "not_breaded_vegetable": {
-        "fndds_keywords": [],
+      "cauliflower": {
+        "fndds_keywords": [
+          "cauliflower"
+        ],
         "off_keywords": [
-          "en:meats-and-their-products",
-          "en:meat-preparations",
-          "en:turkey-and-its-products"
+          "cauliflower",
+          "cauliflower tempura",
+          "cauliflower fritters"
+        ]
+      },
+      "broccoli": {
+        "fndds_keywords": [
+          "broccoli"
+        ],
+        "off_keywords": [
+          "broccoli",
+          "broccoli tempura",
+          "broccoli fritters"
+        ]
+      },
+      "squash": {
+        "fndds_keywords": [
+          "squash",
+          "summer squash"
+        ],
+        "off_keywords": [
+          "squash",
+          "summer squash"
+        ]
+      },
+      "tomato": {
+        "fndds_keywords": [
+          "tomato",
+          "green tomatoes"
+        ],
+        "off_keywords": [
+          "tomato",
+          "green tomatoes",
+          "tomato rings"
+        ]
+      },
+      "green_beans": {
+        "fndds_keywords": [
+          "green beans"
+        ],
+        "off_keywords": [
+          "green beans",
+          "green bean fritters"
+        ]
+      },
+      "eggplant": {
+        "fndds_keywords": [
+          "eggplant"
+        ],
+        "off_keywords": [
+          "eggplant",
+          "eggplant tempura"
+        ]
+      },
+      "okra": {
+        "fndds_keywords": [
+          "okra"
+        ],
+        "off_keywords": [
+          "okra",
+          "okra fritters"
         ]
       }
     }
