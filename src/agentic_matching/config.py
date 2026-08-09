@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ FDC_DATASETS = {
 }
 
 # Blocks in scope for the FNDDS<->OFF splink linkage.
-BLOCKS = ["yogurt", "beans"]
+BLOCKS = ["yogurt", "beans", "breaded_vegetables"]
 
 for d in (
     RAW_FDC_DIR,
@@ -58,6 +59,7 @@ for d in (
     CALIBRATION_DIR,
     BLOCKS_DIR,
     ARTIFACTS_DIR,
+    PROFILING_DIR,
 ):
     d.mkdir(parents=True, exist_ok=True)
 
@@ -68,19 +70,23 @@ for d in (
 
 
 class LLMSettings(BaseSettings):
-    """Settings for the locally-hosted vLLM OpenAI-compatible server.
+    """Settings for the locally-hosted LLM server (vLLM or Ollama, both exposed as an
+    OpenAI-compatible endpoint -- see llm/client.py).
 
-    Switching hardware later is a one-variable change:
-      - CPU (default, this box):       LLM_DEVICE=cpu
-      - NVIDIA GPU:                    LLM_DEVICE=cuda LLM_DTYPE=bfloat16
-      - AMD ROCm GPU:                  LLM_DEVICE=rocm LLM_DTYPE=float16
+    Switching hardware/backend later is a one-variable change:
+      - CPU via vLLM:      LLM_DEVICE=cpu     -- vLLM's CPU build must be installed
+        separately (see README); its build/install can be finicky.
+      - CPU via Ollama:    LLM_DEVICE=ollama  -- easier to get running on CPU (a single
+        installer, no manual build step); recommended if vLLM's CPU build gives trouble.
+      - NVIDIA GPU:        LLM_DEVICE=cuda LLM_DTYPE=bfloat16
+      - AMD ROCm GPU:      LLM_DEVICE=rocm LLM_DTYPE=float16
     No application code changes are required for the switch; only server.py's
-    launch-flag construction branches on `device`.
+    launch-flag construction and default port/model branch on `device`.
     """
 
     model_config = SettingsConfigDict(env_prefix="LLM_", env_file=".env", extra="ignore")
 
-    device: str = "cpu"  # cpu | cuda | rocm
+    device: str = "cpu"  # cpu | cuda | rocm | ollama
     model: str = "NousResearch/Meta-Llama-3.1-8B-Instruct"
     dtype: str = "bfloat16"
     base_url: str | None = None  # if set, connect to an already-running server instead
@@ -91,9 +97,21 @@ class LLMSettings(BaseSettings):
     gpu_memory_utilization: float = 0.85
     tensor_parallel_size: int = 1
     request_timeout_s: float = 600.0
-    max_tokens: int = 1024
-    temperature: float = 0.2
-    startup_timeout_s: float = 900.0  # CPU cold-start of an 8B model can be slow
+    max_tokens: int = 8192
+    temperature: float = 0.33
+    startup_timeout_s: float = 900.0  # self-hosted LLM server startup can take a while
+
+    @model_validator(mode="after")
+    def _apply_ollama_defaults(self) -> "LLMSettings":
+        # Ollama's own defaults differ from vLLM's (port 11434 vs 8001; model tags like
+        # "qwen2.5:1.5b" vs HF repo names) -- only apply them for fields the user hasn't
+        # explicitly set (via env var or otherwise), so LLM_PORT/LLM_MODEL always win.
+        if self.device == "ollama":
+            if "port" not in self.model_fields_set:
+                self.port = 11434
+            if "model" not in self.model_fields_set:
+                self.model = "qwen2.5:1.5b"
+        return self
 
     @property
     def effective_base_url(self) -> str:

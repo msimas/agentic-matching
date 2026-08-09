@@ -161,5 +161,43 @@
       "organic",
       "bio"
     ]
+  },
+  {
+    "name": "has_meat",
+    "kind": "boolean",
+    "description": "Does this include meat (e.g. pork and beans, beans with bacon/sausage)?",
+    "fndds_keywords": [
+      "pork",
+      "beef",
+      "bacon",
+      "sausage",
+      "ham",
+      "chicken",
+      "meat"
+    ],
+    "off_keywords": [
+      "pork",
+      "beef",
+      "bacon",
+      "sausage",
+      "ham",
+      "chicken",
+      "meat",
+      "porc",
+      "boeuf",
+      "lardons"
+    ]
+  },
+  {
+    "name": "with_rice",
+    "kind": "boolean",
+    "description": "Is this a beans-and-rice mixed dish (vs. beans alone)?",
+    "fndds_keywords": [
+      "rice"
+    ],
+    "off_keywords": [
+      "rice",
+      "riz"
+    ]
   }
 ]

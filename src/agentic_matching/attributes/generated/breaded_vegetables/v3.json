@@ -1,0 +1,88 @@
+[
+  {
+    "name": "has_onion_rings_variant",
+    "kind": "boolean",
+    "description": "Detects products that contain 'onion rings' or 'onion ring' in either name or description, including variants like 'onion ring chips' or 'onion rings flavour', to capture a broad range of onion-based fried products.",
+    "fndds_keywords": [
+      "onion rings",
+      "onion ring",
+      "onion ring chips"
+    ],
+    "off_keywords": [
+      "onion rings",
+      "onion ring",
+      "onion ring chips"
+    ]
+  },
+  {
+    "name": "has_sweet_potato_base",
+    "kind": "boolean",
+    "description": "Identifies products where 'sweet potato' is present in the description or name, indicating a specific vegetable base that distinguishes them from other fried vegetable products.",
+    "fndds_keywords": [
+      "sweet potato"
+    ],
+    "off_keywords": [
+      "sweet",
+      "potato"
+    ]
+  },
+  {
+    "name": "has_tempura_fry_method",
+    "kind": "boolean",
+    "description": "Flags products that mention 'tempura' in either side, indicating a distinct frying method (e.g., vegetable tempura), which differentiates from deep-fried or breaded products.",
+    "fndds_keywords": [
+      "tempura"
+    ],
+    "off_keywords": [
+      "tempura"
+    ]
+  },
+  {
+    "name": "is_fried_green_vegetable",
+    "kind": "boolean",
+    "description": "Detects products involving green vegetables (e.g., green beans, green tomatoes) that are fried, distinguishing them from other types of fried vegetables.",
+    "fndds_keywords": [
+      "fried green beans",
+      "fried green tomatoes",
+      "green beans",
+      "green tomatoes"
+    ],
+    "off_keywords": [
+      "green beans",
+      "green tomatoes",
+      "green"
+    ]
+  },
+  {
+    "name": "is_frozen_product",
+    "kind": "boolean",
+    "description": "Flags products that are explicitly described as frozen, which is common in fast-food or pre-processed breaded vegetable items.",
+    "fndds_keywords": [
+      "frozen"
+    ],
+    "off_keywords": [
+      "frozen"
+    ]
+  },
+  {
+    "name": "has_breaded_vegetable_tag",
+    "kind": "categorical",
+    "description": "Categorizes products based on whether they are tagged as breaded vegetables in Open Food Facts, which is a strong indicator of product type.",
+    "categories": {
+      "breaded_vegetable": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "en:breaded-products"
+        ]
+      },
+      "not_breaded_vegetable": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "en:meats-and-their-products",
+          "en:meat-preparations",
+          "en:turkey-and-its-products"
+        ]
+      }
+    }
+  }
+]

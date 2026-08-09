@@ -1,0 +1,137 @@
+[
+  {
+    "name": "is_greek",
+    "kind": "boolean",
+    "description": "Is this a Greek-style yogurt?",
+    "fndds_keywords": [
+      "greek"
+    ],
+    "off_keywords": [
+      "greek",
+      "grec"
+    ]
+  },
+  {
+    "name": "is_plain",
+    "kind": "boolean",
+    "description": "Is this a plain (unflavored) yogurt?",
+    "fndds_keywords": [
+      "plain"
+    ],
+    "off_keywords": [
+      "plain",
+      "nature",
+      "natural"
+    ]
+  },
+  {
+    "name": "is_drink",
+    "kind": "boolean",
+    "description": "Is this a drinkable yogurt product?",
+    "fndds_keywords": [
+      "drink",
+      "smoothie",
+      "kefir"
+    ],
+    "off_keywords": [
+      "drink",
+      "smoothie",
+      "kefir",
+      "a boire"
+    ]
+  },
+  {
+    "name": "is_baby",
+    "kind": "boolean",
+    "description": "Is this targeted at infants/toddlers?",
+    "fndds_keywords": [
+      "baby food",
+      "infant"
+    ],
+    "off_keywords": [
+      "baby",
+      "infant",
+      "toddler"
+    ]
+  },
+  {
+    "name": "fruit_flavored",
+    "kind": "boolean",
+    "description": "Is this flavored using fruit?",
+    "fndds_keywords": [
+      "fruit",
+      "strawberry",
+      "blueberry",
+      "peach",
+      "berry"
+    ],
+    "off_keywords": [
+      "fruit",
+      "strawberry",
+      "blueberry",
+      "peach",
+      "berry",
+      "fraise"
+    ]
+  },
+  {
+    "name": "contains_cereal",
+    "kind": "boolean",
+    "description": "Does this include cereal (granola, oat bran, corn flakes, etc.)?",
+    "fndds_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
+    ],
+    "off_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
+    ]
+  },
+  {
+    "name": "fat_level",
+    "kind": "categorical",
+    "description": "Fat content tier",
+    "categories": {
+      "fat_free": {
+        "fndds_keywords": [
+          "nonfat",
+          "fat free",
+          "skim"
+        ],
+        "off_keywords": [
+          "fat free",
+          "0% fat",
+          "skimmed",
+          "nonfat"
+        ]
+      },
+      "low_fat": {
+        "fndds_keywords": [
+          "low fat",
+          "lowfat",
+          "low-fat"
+        ],
+        "off_keywords": [
+          "low fat",
+          "light",
+          "1%",
+          "2%"
+        ]
+      },
+      "full_fat": {
+        "fndds_keywords": [
+          "whole milk"
+        ],
+        "off_keywords": [
+          "whole milk",
+          "full fat",
+          "entier"
+        ]
+      }
+    }
+  }
+]

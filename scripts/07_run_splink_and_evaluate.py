@@ -27,7 +27,7 @@ def main(
         typer.echo(
             f"round {r.round}: degeneracy_flags={len(r.degeneracy_flags)} "
             f"precision={ev.get('precision')} recall={ev.get('recall')} f1={ev.get('f1')} "
-            f"n_pairs={r.plausibility.get('n_pairs')}"
+            f"n_pairs={r.plausibility.get('n_pairs')} -> {r.matches_csv}"
         )
 
 

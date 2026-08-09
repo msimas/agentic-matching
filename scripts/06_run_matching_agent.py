@@ -22,6 +22,8 @@ def main(
     if block not in BLOCKS:
         raise typer.BadParameter(f"--block must be one of {BLOCKS}, got {block!r}")
     rounds = run_attribute_agent(block)
+    if not rounds:
+        typer.echo(f"'{block}': round 0 failed with no seed to fall back to further, or no rounds ran.")
     for r in rounds:
         names = [a["name"] for a in r.attributes]
         typer.echo(f"round {r.round}: {len(names)} attributes ({names}), {len(r.correlation_flags)} correlation flags")

@@ -26,12 +26,61 @@ from agentic_matching.config import FDC_DUCKDB_PATH, OFF_SEARCH_TEXT_PARQUET
 
 log = logging.getLogger(__name__)
 
-# Canonical ground-truth term per block, used ONLY to determine calibration-proxy block
-# membership -- never shown to the LLM as part of the candidate rule it's evaluated on.
-CANONICAL_BLOCK_TERMS = {
-    "yogurt": "yogurt",
-    "beans": "bean",
+# Canonical ground-truth term(s) per block, used ONLY to determine calibration-proxy
+# block membership (and to seed round-0 samples/category options) -- never shown to the
+# LLM as part of the candidate rule it's evaluated on. A list, not a single string,
+# because not every block anchors to one word: "breaded_vegetables" has no single term
+# that works (FNDDS's own "breaded" entries are almost all chicken/turkey/fish, not
+# vegetables -- the concept lives in FNDDS's "Fried vegetables" WWEIA category instead,
+# and "fried" alone is far too broad a keyword), so its anchor is several specific
+# dish-name terms OR'd together instead.
+CANONICAL_BLOCK_TERMS: dict[str, list[str]] = {
+    "yogurt": ["yogurt"],
+    "beans": ["bean"],
+    "breaded_vegetables": [
+        "fried vegetable", "breaded vegetable", "onion ring", "fried okra",
+        "fried mushroom", "fried cauliflower", "fried eggplant", "fried squash",
+        "fried green tomato", "fried green bean", "fried broccoli",
+        "vegetable tempura", "pakora", "fried pickle",
+        # "sweet potato fries"/"sweet potato tot"/"yuca fries" deliberately dropped:
+        # the block's definition was refined to "breaded" vegetables specifically, not
+        # just "fried" ones (see blocking/seed_rules.py's exclude_keywords, which now
+        # exclude "fries"/"fry"/"french fries" on both sides for the same reason) --
+        # keeping these plain-fried, unbreaded items in the calibration ground truth
+        # would make pair_completeness/holdout f1 structurally unrecoverable (they'd
+        # always disagree with the rule they're supposed to be calibrating against),
+        # not a genuine measure of match quality. Verified: with them still listed here,
+        # pair_completeness and linking holdout f1 both read exactly 0.0 despite the
+        # actual matches (matches_breaded_vegetables_round0.csv) looking correct
+        # (Pakora<->Pakora, Vegetable Tempura<->Vegetable Tempura, ~0.87 probability).
+    ],
 }
+
+
+def combined_exclude_keywords(rule: dict[str, Any]) -> list[str]:
+    """The union of both sides' exclude_keywords from a blocking rule -- used to keep
+    the calibration ground truth (pair_completeness/holdout, below) honest about the
+    same false-positive patterns the rule itself was told to exclude."""
+    excludes = {k.lower() for k in rule.get("fndds", {}).get("exclude_keywords", []) if k}
+    excludes |= {k.lower() for k in rule.get("off", {}).get("exclude_keywords", []) if k}
+    return sorted(excludes)
+
+
+def exclude_predicate_sql(text_col: str, excludes: list[str]) -> str:
+    """OR'd LIKE predicate over `excludes` against `text_col` -- "FALSE" (matches
+    nothing) if there are none, so callers can unconditionally wrap with `NOT (...)`."""
+    if not excludes:
+        return "FALSE"
+    return "(" + " OR ".join(f"{text_col} LIKE '%{e.replace(chr(39), chr(39)*2)}%'" for e in excludes) + ")"
+
+
+def term_predicate_sql(text_col: str, block_name: str) -> str:
+    """OR'd LIKE predicate over CANONICAL_BLOCK_TERMS[block_name] against `text_col`.
+    Shared by pair_completeness (below) and blocking/agent_loop.py's round-0 sampling
+    and category-options lookup -- anywhere the canonical (withheld-from-the-LLM)
+    anchor term(s) are used to identify plausibly-in-block records."""
+    terms = [t.lower().replace("'", "''") for t in CANONICAL_BLOCK_TERMS[block_name]]
+    return "(" + " OR ".join(f"{text_col} LIKE '%{t}%'" for t in terms) + ")"
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -83,9 +132,28 @@ def reduction_ratio(sizes: dict[str, int]) -> float:
 def pair_completeness(
     con: duckdb.DuckDBPyConnection, block_name: str, rule: dict[str, Any]
 ) -> dict[str, Any]:
-    term = CANONICAL_BLOCK_TERMS[block_name].replace("'", "''")
-    fndds_pred = fndds_predicate_sql(rule, text_col="lower(fndds_style_description)")
-    off_pred = off_predicate_sql(rule, text_col="lower(coalesce(off_product_name, ''))")
+    branded_term_pred = term_predicate_sql("lower(coalesce(branded_food_category, ''))", block_name)
+    off_term_pred = term_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", block_name)
+    # A canonical term matched against a *category* string, not a product name, can be
+    # much coarser than intended: verified case (this project's "breaded_vegetables"
+    # block) -- Branded Foods lumps onion rings into one mega-category, "French Fries,
+    # Potatoes & Onion Rings", so the canonical term "onion ring" alone pulled ~3,947
+    # gold pairs into true_block via *that whole category*, the overwhelming majority of
+    # which are plain fries/potato products, not onion rings. The rule's own
+    # exclude_keywords (e.g. "fries", "fry") already encode exactly this kind of
+    # false-positive pattern for the *block* predicate below -- applying the same
+    # excludes to the true_block definition itself keeps the calibration ground truth
+    # consistent with the domain knowledge the rule was given, instead of silently
+    # scoring the rule against a ground truth it was explicitly told to disagree with.
+    excludes = combined_exclude_keywords(rule)
+    branded_exclude_pred = exclude_predicate_sql("lower(coalesce(branded_food_category, ''))", excludes)
+    off_exclude_pred = exclude_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", excludes)
+    # Branded Foods (the FNDDS-side text stand-in here -- see module docstring) has no
+    # WWEIA-equivalent categorization, so the fndds-side category predicate can't be
+    # evaluated against this proxy; category_col=None falls back to keywords only for
+    # this side. The OFF side's real categories_tags IS available in gold_pairs.
+    fndds_pred = fndds_predicate_sql(rule, text_col="lower(fndds_style_description)", category_col=None)
+    off_pred = off_predicate_sql(rule, text_col="lower(coalesce(off_product_name, ''))", category_col="off_categories_tags")
     row = con.execute(
         f"""
         WITH proxy AS (
@@ -97,8 +165,8 @@ def pair_completeness(
         ),
         true_block AS (
             SELECT * FROM proxy
-            WHERE lower(coalesce(branded_food_category, '')) LIKE '%{term}%'
-               OR lower(array_to_string(off_categories_tags, ' ')) LIKE '%{term}%'
+            WHERE ({branded_term_pred} OR {off_term_pred})
+              AND NOT ({branded_exclude_pred} OR {off_exclude_pred})
         )
         SELECT
             count(*) AS n_true_block,

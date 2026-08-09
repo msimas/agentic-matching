@@ -36,13 +36,61 @@ def stringify(v: Any) -> Any:
     return v
 
 
+def _drop_unobservable_attrs(
+    attrs: list[dict[str, Any]], fndds_vals: dict[str, list[Any]], off_vals: dict[str, list[Any]]
+) -> tuple[list[dict[str, Any]], dict[str, list[Any]], dict[str, list[Any]]]:
+    """Drop any attribute whose computed value is None for *every* record on one side.
+
+    Only a categorical attribute can produce this (library.apply_attribute always
+    resolves a boolean attribute to True/False, never None) -- it happens when the LLM
+    (or a hand-authored seed) gives every category real off_keywords but leaves every
+    category's fndds_keywords empty (or vice versa), e.g. verified against this
+    project's "breaded_vegetables" block: has_breaded_vegetable_tag had off_keywords
+    like "en:breaded-products" but fndds_keywords: [] on both categories, so every FNDDS
+    record's value was None -- unconditionally, since apply_attribute never assigns a
+    category name from an empty keyword list. A column that's 100% null on one side can
+    never form an observed "exact match" or "not equal" comparison level (every pair
+    falls into the always-fixed, uninformative "value is null" level instead), so
+    splink's EM training has zero pairs to estimate that comparison's m/u from at all --
+    it just logs "... not fully trained" and predict() silently falls back to defaults,
+    which is a confusing failure mode to hit at predict time. Filtering the attribute
+    out here, before it ever reaches splink, is cheap insurance against a bad
+    LLM-proposed (or seed) attribute breaking training on any block, not just this one.
+    """
+    kept: list[dict[str, Any]] = []
+    kept_fndds_vals: dict[str, list[Any]] = {}
+    kept_off_vals: dict[str, list[Any]] = {}
+    for attr in attrs:
+        name = attr["name"]
+        fndds_all_null = all(v is None for v in fndds_vals[name])
+        off_all_null = all(v is None for v in off_vals[name])
+        if fndds_all_null or off_all_null:
+            log.warning(
+                "Dropping matching attribute '%s': entirely null on the %s side (no "
+                "category's %s_keywords ever matched a record there), so it can never "
+                "produce an observed comparison level and would otherwise break "
+                "splink's EM training for it. Fix the attribute's %s_keywords, or drop "
+                "it, in the generated attribute set if this recurs.",
+                name,
+                "fndds" if fndds_all_null else "off",
+                "fndds" if fndds_all_null else "off",
+                "fndds" if fndds_all_null else "off",
+            )
+            continue
+        kept.append(attr)
+        kept_fndds_vals[name] = fndds_vals[name]
+        kept_off_vals[name] = off_vals[name]
+    return kept, kept_fndds_vals, kept_off_vals
+
+
 def prepare_frames(
     block_name: str, attrs: list[dict[str, Any]]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, Any]]]:
     fndds_raw, off_raw = load_block_frames(block_name)
 
     fndds_vals = compute_attribute_values(attrs, fndds_raw["fndds_search_text"].tolist(), side="fndds")
     off_vals = compute_attribute_values(attrs, off_raw["search_text"].tolist(), side="off")
+    attrs, fndds_vals, off_vals = _drop_unobservable_attrs(attrs, fndds_vals, off_vals)
 
     fndds_df = pd.DataFrame(
         {
@@ -60,7 +108,7 @@ def prepare_frames(
             **{name: [stringify(v) for v in vals] for name, vals in off_vals.items()},
         }
     )
-    return fndds_df, off_df
+    return fndds_df, off_df, attrs
 
 
 def build_comparisons(attrs: list[dict[str, Any]]) -> list[Any]:
@@ -83,25 +131,32 @@ def build_blocking_rules(attrs: list[dict[str, Any]]) -> list[Any]:
 
 
 def build_linker(
-    block_name: str, attrs: list[dict[str, Any]]
-) -> tuple[Linker, pd.DataFrame, pd.DataFrame]:
-    fndds_df, off_df = prepare_frames(block_name, attrs)
+    block_name: str, attrs: list[dict[str, Any]], retain_intermediate_calculation_columns: bool = False
+) -> tuple[Linker, pd.DataFrame, pd.DataFrame, list[dict[str, Any]]]:
+    """Returns (linker, fndds_df, off_df, attrs) -- `attrs` is echoed back because
+    prepare_frames may drop attributes that turned out to be unobservable on one side
+    (see `_drop_unobservable_attrs`); callers must train() with THIS returned list, not
+    the one they passed in, or splink_model.train()'s EM blocking will reference a
+    comparison column that was never added to the settings/dataframes."""
+    fndds_df, off_df, attrs = prepare_frames(block_name, attrs)
     settings = SettingsCreator(
         link_type="link_only",
         comparisons=build_comparisons(attrs),
         blocking_rules_to_generate_predictions=build_blocking_rules(attrs),
         # Intermediate per-comparison-level calculation columns are only useful for
-        # manually eyeballing a handful of pairs; retaining them for every predicted
+        # manually eyeballing a handful of pairs (e.g. linking/charts.py's waterfall
+        # chart, which requires this to be True); retaining them for every predicted
         # pair roughly multiplies the width of the (already wide, block-sized) result
         # table and was a major contributor to this stage exhausting memory on this
-        # box's block sizes (~1K x ~100K+). degeneracy_check.py only reads the exported
-        # m/u settings JSON, not row-level columns, so nothing downstream needs these.
-        retain_intermediate_calculation_columns=False,
+        # box's block sizes (~1K x ~100K+) before the EM-blocking fix in train() below.
+        # degeneracy_check.py and the main agent loop don't need row-level columns, so
+        # this defaults to False for the production train/evaluate path.
+        retain_intermediate_calculation_columns=retain_intermediate_calculation_columns,
     )
     linker = Linker(
         [fndds_df, off_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"]
     )
-    return linker, fndds_df, off_df
+    return linker, fndds_df, off_df, attrs
 
 
 def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:

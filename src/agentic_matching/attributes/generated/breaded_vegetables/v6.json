@@ -1,0 +1,55 @@
+[
+  {
+    "name": "has_onion_rings_variant",
+    "kind": "boolean",
+    "description": "Indicates whether the product is a variant of onion rings, based on the presence of 'onion' or 'rings' in the OFF product name and 'onion rings' or 'onion' in the FNDDS description. This attribute is retained and refined to be more precise and distinct from existing ones.",
+    "fndds_keywords": [
+      "onion rings",
+      "onion"
+    ],
+    "off_keywords": [
+      "onion rings",
+      "rings",
+      "onion"
+    ]
+  },
+  {
+    "name": "has_tempura_style",
+    "kind": "boolean",
+    "description": "Indicates whether the product is described or named as using a tempura batter or style, based on the presence of 'tempura' in either the FNDDS description or OFF product name.",
+    "fndds_keywords": [
+      "tempura"
+    ],
+    "off_keywords": [
+      "tempura"
+    ]
+  },
+  {
+    "name": "is_fried_vegetable_with_root_stem",
+    "kind": "boolean",
+    "description": "Indicates whether the product features a fried vegetable that includes a root stem (e.g., potato, sweet potato, squash), based on the presence of 'potato', 'sweet', or 'squash' in the FNDDS description and 'potato', 'sweet', or 'squash' in the OFF product name. This attribute helps distinguish root-based fried vegetables from leafy or other types of vegetables, and is distinct from the existing 'has_fried_vegetable_with_potato_or_squash' by focusing on root stem identity rather than just presence of root vegetables.",
+    "fndds_keywords": [
+      "potato",
+      "sweet",
+      "squash"
+    ],
+    "off_keywords": [
+      "potato",
+      "sweet",
+      "squash"
+    ]
+  },
+  {
+    "name": "is_breaded_mushroom_or_broccoli_variant",
+    "kind": "boolean",
+    "description": "Indicates whether the product includes mushrooms or broccoli as a key ingredient in a fried or breaded form, based on the presence of 'mushrooms' or 'broccoli' in the FNDDS description and 'mushrooms' or 'broccoli' in the OFF product name. This attribute is distinct from the existing one by focusing on the ingredient rather than the overall product name.",
+    "fndds_keywords": [
+      "mushrooms",
+      "broccoli"
+    ],
+    "off_keywords": [
+      "mushrooms",
+      "broccoli"
+    ]
+  }
+]

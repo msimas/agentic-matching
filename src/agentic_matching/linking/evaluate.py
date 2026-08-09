@@ -17,6 +17,7 @@ produced:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -24,7 +25,8 @@ import pandas as pd
 from splink import DuckDBAPI, Linker
 
 from agentic_matching.attributes.library import compute_attribute_values
-from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
+from agentic_matching.blocking.metrics import combined_exclude_keywords, exclude_predicate_sql, term_predicate_sql
+from agentic_matching.blocking.seed_rules import get_seed_rule
 from agentic_matching.config import CALIBRATION_DIR
 from agentic_matching.linking.splink_model import stringify
 
@@ -32,7 +34,21 @@ log = logging.getLogger(__name__)
 
 
 def _load_block_holdout(block_name: str) -> pd.DataFrame:
-    term = CANONICAL_BLOCK_TERMS[block_name].replace("'", "''")
+    branded_term_pred = term_predicate_sql("lower(coalesce(branded_food_category, ''))", block_name)
+    off_term_pred = term_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", block_name)
+    # Same false-positive-category problem as metrics.pair_completeness (see its
+    # docstring comment for the verified "onion ring" -> "French Fries, Potatoes &
+    # Onion Rings" case) -- applied here too so the linking holdout doesn't score
+    # against a ground truth that disagrees with the block's own known exclusions.
+    # This function has no per-round `rule` to draw excludes from (unlike
+    # pair_completeness), so it falls back to the seed rule -- the persisted,
+    # SME-authored source of this domain knowledge (see blocking/seed_rules.py) -- if
+    # one exists for this block; blocks with no seed rule get no extra exclusion here,
+    # same as before this fix.
+    seed_rule = get_seed_rule(block_name) or {}
+    excludes = combined_exclude_keywords(seed_rule)
+    branded_exclude_pred = exclude_predicate_sql("lower(coalesce(branded_food_category, ''))", excludes)
+    off_exclude_pred = exclude_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", excludes)
     holdout_path = str(CALIBRATION_DIR / "holdout.parquet").replace("'", "''")
     con = duckdb.connect()
     df = con.execute(
@@ -40,8 +56,8 @@ def _load_block_holdout(block_name: str) -> pd.DataFrame:
         SELECT fdc_id, off_code, fndds_style_description, branded_food_category,
                off_product_name, off_categories_tags
         FROM read_parquet('{holdout_path}')
-        WHERE lower(coalesce(branded_food_category, '')) LIKE '%{term}%'
-           OR lower(array_to_string(off_categories_tags, ' ')) LIKE '%{term}%'
+        WHERE ({branded_term_pred} OR {off_term_pred})
+          AND NOT ({branded_exclude_pred} OR {off_exclude_pred})
         """
     ).df()
     con.close()
@@ -152,6 +168,45 @@ def score_against_holdout(
         "recall": recall,
         "f1": f1,
     }
+
+
+def export_predictions_csv(
+    predictions: pd.DataFrame, attrs: list[dict[str, Any]], out_path: Path, top_n: int | None = 5000
+) -> int:
+    """Write the top `top_n` predicted FNDDS<->OFF pairs (by `match_probability`,
+    descending) to a CSV for direct SME inspection -- confidence is conveyed by the
+    `match_probability` column itself, not a hard cutoff, so the file always shows the
+    *best available* candidates even when none clear a nominal "confident match"
+    threshold (a block/attribute combination too weak to produce any high-confidence
+    match is exactly the kind of thing this review artifact needs to surface, not hide
+    behind an empty file -- verified case: yogurt's `predict(threshold=0.5)` returned
+    zero rows even though 304K real candidate pairs existed, topping out at
+    match_probability 0.21). `top_n=None` exports every row `predictions` contains;
+    pass an already-thresholded `predictions` if you want the file itself gated on a
+    decision threshold instead. match_probability first so it opens sorted by
+    confidence in any spreadsheet tool, one column pair per matching attribute so an
+    SME can see exactly why a pair did or didn't agree. Returns the number of rows
+    written."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    base_cols = ["match_probability", "match_weight", "unique_id_l", "description_l", "unique_id_r", "description_r"]
+    attr_cols = [c for a in attrs for c in (f"{a['name']}_l", f"{a['name']}_r")]
+    cols = [c for c in base_cols + attr_cols if c in predictions.columns]
+    if predictions.empty:
+        pd.DataFrame(columns=cols).to_csv(out_path, index=False)
+        return 0
+    sorted_preds = predictions.sort_values("match_probability", ascending=False)
+    if top_n is not None:
+        sorted_preds = sorted_preds.head(top_n)
+    out = sorted_preds[cols].rename(
+        columns={
+            "unique_id_l": "fndds_id",
+            "description_l": "fndds_description",
+            "unique_id_r": "off_code",
+            "description_r": "off_product_name",
+        }
+    )
+    out.to_csv(out_path, index=False)
+    return len(out)
 
 
 def plausibility_report(predictions: pd.DataFrame, top_n: int = 10) -> dict[str, Any]:

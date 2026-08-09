@@ -1,0 +1,82 @@
+[
+  {
+    "name": "has_onion_rings",
+    "kind": "boolean",
+    "description": "Indicates whether the product contains onion rings, a common component in breaded vegetable dishes like onion rings or milanaise.",
+    "fndds_keywords": [
+      "onion rings"
+    ],
+    "off_keywords": [
+      "onion rings",
+      "les milanaises",
+      "m\u00e9lange \u00e0 tempura",
+      "cordon bleu \u00e0 la milanaise"
+    ]
+  },
+  {
+    "name": "has_tempura_batter",
+    "kind": "boolean",
+    "description": "Indicates whether the product uses tempura batter, a key characteristic of Japanese-style breaded vegetables like tempura battered whiting or vegetable tempura.",
+    "fndds_keywords": [
+      "tempura",
+      "vegetable tempura"
+    ],
+    "off_keywords": [
+      "tempura",
+      "tempura battered",
+      "m\u00e9lange \u00e0 tempura"
+    ]
+  },
+  {
+    "name": "is_breaded_vegetable",
+    "kind": "boolean",
+    "description": "Indicates whether the product is primarily a breaded vegetable (not meat or meat-based), based on the presence of vegetable-specific terms in both descriptions.",
+    "fndds_keywords": [
+      "fried vegetables",
+      "vegetable",
+      "potato",
+      "squash",
+      "cauliflower",
+      "mushrooms",
+      "broccoli",
+      "green beans",
+      "okra"
+    ],
+    "off_keywords": [
+      "breaded-products",
+      "vegetable",
+      "plant-based",
+      "veg",
+      "veggie"
+    ]
+  },
+  {
+    "name": "is_cordon_bleu_style",
+    "kind": "boolean",
+    "description": "Indicates whether the product is styled after a cordon bleu or milanaise recipe, which often involves breaded meat or vegetable components with a French-inspired name or ingredient.",
+    "fndds_keywords": [
+      "cordon bleu",
+      "milanaise",
+      "escalope"
+    ],
+    "off_keywords": [
+      "cordons-bleus",
+      "milanaise",
+      "escalope",
+      "cordon bleu emmental"
+    ]
+  },
+  {
+    "name": "has_sweet_potato",
+    "kind": "boolean",
+    "description": "Indicates whether the product includes sweet potato, a key ingredient in sweet potato tots, which are common in fast food and school meal contexts.",
+    "fndds_keywords": [
+      "sweet potato tots"
+    ],
+    "off_keywords": [
+      "sweet potato",
+      "potato",
+      "tots"
+    ]
+  }
+]

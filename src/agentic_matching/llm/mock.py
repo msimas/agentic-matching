@@ -14,173 +14,147 @@ for real LLM reasoning — swap `LLM_DEVICE` away from `mock` to use it for real
 
 from __future__ import annotations
 
-import functools
 import json
 import re
 from collections import Counter
-from typing import Any, Literal
+from typing import Any
 
 from agentic_matching.attributes.library import SEED_ATTRIBUTES as _LIBRARY_SEED_ATTRIBUTES
+from agentic_matching.blocking.rules import NEVER_USEFUL_KEYWORDS as _STOPWORDS
 from agentic_matching.llm.client import ChatClient
 
-_STOPWORDS = {
-    "the", "and", "or", "of", "with", "a", "an", "in", "to", "for", "as", "is", "on",
-    "not", "no", "ns", "nfs", "type", "milk", "from", "added", "fat", "other", "than",
-    # Generic sensory/marketing descriptors that show up across nearly every food
-    # category (not specific to any one block) -- promoting these as blocking keywords
-    # is what let the yogurt/beans rules balloon to include unrelated products (e.g.
-    # "vanilla"/"cream" pulled in vanilla ice cream and cream cheese as "beans"). A real
-    # LLM wouldn't propose these; this mock's naive top-frequency mining needs the
-    # explicit stopword to avoid the same mistake.
-    "cream", "creamy", "vanilla", "cool", "sweet", "fresh", "chocolate", "flavor",
-    "flavors", "flavored", "sauce", "mix", "classic", "light", "lite", "style",
-    "select", "value", "premium", "great", "brand", "original", "natural", "organic",
-}
+# _STOPWORDS (aliased from blocking/rules.py's NEVER_USEFUL_KEYWORDS -- one shared
+# source of truth, since it's now also hard-enforced there on every proposed rule
+# regardless of source) filters out plain function/connector words -- these need no
+# data, they're never useful keywords regardless of catalog frequency. Domain
+# genericness beyond that (e.g. "protein", "rice", "black" each matching tens of
+# thousands of unrelated OFF records) is NOT handled by a hand-curated list -- that was
+# tried and is whack-a-mole (some new generic word always slips through). Instead it's
+# handled by `_reject_terms`, which reads the same `corpus_stats` (see profiling.py /
+# llm/prompts.py) a real LLM would be shown, so this mock's judgment about what's "too
+# generic" is grounded in the same real catalog data rather than a list someone has to
+# keep extending by hand.
 
 _TOKEN_RE = re.compile(r"[a-z]+")
 
 
-def _doc_freq(texts: list[str], min_len: int = 4) -> tuple[Counter, int]:
+def _doc_freq(texts: list[str], min_len: int = 4) -> Counter:
     counts: Counter[str] = Counter()
-    n = 0
     for t in texts:
         if not t:
             continue
-        n += 1
         for tok in {tok for tok in _TOKEN_RE.findall(t.lower()) if len(tok) >= min_len}:
             counts[tok] += 1
-    return counts, n
+    return counts
 
 
-@functools.lru_cache(maxsize=1)
-def _background_doc_freq(side: Literal["fndds", "off"]) -> tuple[Counter, int, int]:
-    """Token document-frequency over a fixed, block-agnostic sample of the given side's
-    whole catalog, plus that side's true total row count (for scaling the sample-based
-    frequency up to an estimated catalog-wide match count). Used to reject mined tokens
-    that would match a huge absolute number of records catalog-wide (e.g. "protein",
-    "rice", "black") rather than actually being specific to the block being mined -- a
-    within-block top-frequency count, or even a plain *relative* background frequency,
-    can't tell this apart: at OFF's ~4.66M-row scale, even a token that's rare in a
-    background sample (a percent or less) still implies tens of thousands of matches,
-    which is what kept letting generic ingredient/descriptor words slip into proposed
-    keyword lists and blow up block size. Cached (module-lifetime) since it's the same
-    regardless of which block is currently being mined.
-    """
-    import duckdb
-
-    from agentic_matching.config import FDC_DUCKDB_PATH, OFF_SEARCH_TEXT_PARQUET
-
-    if side == "off":
-        path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-        con = duckdb.connect()
-        # A deterministic ~1/1000 sample (~4-5K rows) is plenty to estimate catalog-wide
-        # frequency and far cheaper than scanning all ~4.66M OFF rows.
-        rows = con.execute(
-            f"SELECT product_name FROM read_parquet('{path}') WHERE hash(code) % 1000 = 0"
-        ).fetchall()
-        total = con.execute(f"SELECT count(*) FROM read_parquet('{path}')").fetchone()[0]
-    else:
-        # Matches the (read-write, default-config) connection style the rest of the
-        # codebase already holds open against this same file concurrently -- DuckDB
-        # refuses a second connection to one file with a *different* configuration
-        # (e.g. read_only=True here vs. the caller's read-write connection).
-        con = duckdb.connect(str(FDC_DUCKDB_PATH))
-        # FNDDS is small enough (~5.4K rows total) to use in full -- sample == total.
-        rows = con.execute("SELECT description FROM v_fndds").fetchall()
-        total = len(rows)
-    con.close()
-    counts, n = _doc_freq([r[0] for r in rows])
-    return counts, n, total
+def _reject_terms(corpus_stats: dict[str, Any] | None, side: str) -> set[str]:
+    """Terms profiling.py flagged as catalog-wide common for `side` -- i.e. too generic
+    to usefully narrow any block down on their own (see llm/prompts.py's
+    corpus_stats/catalog_wide_common_terms docs)."""
+    if not corpus_stats:
+        return set()
+    return {t["term"] for t in corpus_stats.get(side, {}).get("catalog_wide_common_terms", [])}
 
 
-def _top_tokens(
-    texts: list[str],
-    side: Literal["fndds", "off"],
-    k: int = 6,
-    min_len: int = 4,
-    max_estimated_matches: int = 15_000,
-) -> list[str]:
-    counts, _ = _doc_freq(texts, min_len=min_len)
-    bg_counts, bg_n, bg_total = _background_doc_freq(side)
-    candidates = [tok for tok in counts if tok not in _STOPWORDS]
+def _top_tokens(texts: list[str], reject: set[str], k: int = 6, min_len: int = 4) -> list[str]:
+    counts = _doc_freq(texts, min_len=min_len)
+    candidates = [tok for tok in counts if tok not in _STOPWORDS and tok not in reject]
     candidates.sort(key=lambda t: -counts[t])
-    keywords: list[str] = []
-    for tok in candidates:
-        if len(keywords) >= k:
-            break
-        estimated_matches = (bg_counts.get(tok, 0) / bg_n) * bg_total if bg_n else 0.0
-        if estimated_matches > max_estimated_matches:
-            continue  # would match too large a share of the catalog to be a useful keyword
-        keywords.append(tok)
-    return keywords
+    return candidates[:k]
 
 
-# Seed vocab for the two in-scope blocks, used as a floor so the mock's proposals are
-# reasonable even on the first round before any text-mining has happened.
+def _matching_categories(category_options: list[dict[str, Any]], block: str, k: int = 5) -> list[str]:
+    """Category values (from blocking/agent_loop.py's _category_options) whose own
+    name contains the block's name -- e.g. "Yogurt, regular" / "en:yogurts" for block
+    "yogurt". A simple substring check is enough here precisely because these are
+    short, clean, human-curated labels (unlike free text), so it doesn't need the
+    genericity machinery keyword mining does."""
+    block_singular = block[:-1] if block.endswith("s") else block
+    needles = {block.lower(), block_singular.lower()}
+    matches = [
+        c["value"]
+        for c in sorted(category_options, key=lambda c: -c["count"])
+        if any(n in c["value"].lower() for n in needles)
+    ]
+    return matches[:k]
+
+
+# Seed vocab for the in-scope blocks, used as a floor so the mock's proposals are
+# reasonable even on the first round before any text-mining has happened. No single
+# word anchors "breaded_vegetables" well (see blocking/metrics.py's
+# CANONICAL_BLOCK_TERMS docstring), so its seed is several specific dish names instead.
 _SEED_KEYWORDS = {
     "yogurt": ["yogurt", "yoghurt", "yogourt"],
     "beans": ["bean", "beans", "legume"],
+    "breaded_vegetables": ["onion ring", "fried okra", "fried mushroom", "vegetable tempura", "pakora"],
 }
 
-_BEANS_ATTRIBUTES = [
-    {
-        "name": "bean_type",
-        "kind": "categorical",
-        "description": "Variety of bean",
-        "categories": {
-            "black": {"fndds_keywords": ["black bean"], "off_keywords": ["black bean", "haricot noir"]},
-            "pinto": {"fndds_keywords": ["pinto"], "off_keywords": ["pinto"]},
-            "kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]},
-            "navy": {"fndds_keywords": ["navy bean", "white bean"], "off_keywords": ["navy bean", "white bean"]},
-            "garbanzo": {"fndds_keywords": ["garbanzo", "chickpea"], "off_keywords": ["garbanzo", "chickpea", "pois chiche"]},
-            "lima": {"fndds_keywords": ["lima"], "off_keywords": ["lima"]},
-            "refried": {"fndds_keywords": ["refried"], "off_keywords": ["refried", "refritos"]},
-            "lentil": {"fndds_keywords": ["lentil"], "off_keywords": ["lentil", "lentille"]},
-        },
-    },
-    {
-        "name": "is_canned",
-        "kind": "boolean",
-        "description": "Is this a canned/shelf-stable prepared product?",
-        "fndds_keywords": ["canned", "from canned"],
-        "off_keywords": ["canned", "can ", "boite", "tin"],
-    },
-    {
-        "name": "is_dried",
-        "kind": "boolean",
-        "description": "Is this a dried/dry bean product (vs. prepared/ready-to-eat)?",
-        "fndds_keywords": ["dried", "from dried", "dry"],
-        "off_keywords": ["dried", "dry", "sec"],
-    },
-    {
-        "name": "is_seasoned",
-        "kind": "boolean",
-        "description": "Is this seasoned/flavored (vs. plain)?",
-        "fndds_keywords": ["seasoned", "spicy", "chili", "flavored"],
-        "off_keywords": ["seasoned", "spicy", "chili", "flavored", "epice"],
-    },
-    {
-        "name": "sodium_level",
-        "kind": "categorical",
-        "description": "Sodium content tier",
-        "categories": {
-            "low_sodium": {
-                "fndds_keywords": ["low sodium", "no salt", "reduced sodium"],
-                "off_keywords": ["low sodium", "no salt", "reduced sodium", "sans sel"],
+# Categorical attributes requiring domain-synonym grouping (e.g. "garbanzo"/"chickpea"/
+# "pois chiche" are all the same bean variety; "low sodium"/"no salt"/"sans sel" are all
+# the same sodium tier) -- recognizing that is exactly the kind of world-knowledge
+# reasoning a real LLM should do better than frequency counting, so this mock keeps a
+# small hand-curated exception for it per from-scratch block (only "beans" currently).
+# Every *boolean* attribute, in contrast, is now mined from the block's own data (see
+# _mined_boolean_attributes) rather than hand-curated -- this is the part any new
+# from-scratch block gets "for free" without someone having to write it by hand.
+_CATEGORICAL_EXCEPTIONS: dict[str, list[dict[str, Any]]] = {
+    "beans": [
+        {
+            "name": "bean_type",
+            "kind": "categorical",
+            "description": "Variety of bean",
+            "categories": {
+                "black": {"fndds_keywords": ["black bean"], "off_keywords": ["black bean", "haricot noir"]},
+                "pinto": {"fndds_keywords": ["pinto"], "off_keywords": ["pinto"]},
+                "kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]},
+                "navy": {"fndds_keywords": ["navy bean", "white bean"], "off_keywords": ["navy bean", "white bean"]},
+                "garbanzo": {"fndds_keywords": ["garbanzo", "chickpea"], "off_keywords": ["garbanzo", "chickpea", "pois chiche"]},
+                "lima": {"fndds_keywords": ["lima"], "off_keywords": ["lima"]},
+                "refried": {"fndds_keywords": ["refried"], "off_keywords": ["refried", "refritos"]},
+                "lentil": {"fndds_keywords": ["lentil"], "off_keywords": ["lentil", "lentille"]},
             },
-            "regular": {"fndds_keywords": [], "off_keywords": []},
         },
-    },
-    {
-        "name": "is_organic",
-        "kind": "boolean",
-        "description": "Is this labeled organic?",
-        "fndds_keywords": ["organic"],
-        "off_keywords": ["organic", "bio"],
-    },
-]
+        {
+            "name": "sodium_level",
+            "kind": "categorical",
+            "description": "Sodium content tier",
+            "categories": {
+                "low_sodium": {
+                    "fndds_keywords": ["low sodium", "no salt", "reduced sodium"],
+                    "off_keywords": ["low sodium", "no salt", "reduced sodium", "sans sel"],
+                },
+                "regular": {"fndds_keywords": [], "off_keywords": []},
+            },
+        },
+    ],
+}
 
-_SEED_ATTRIBUTES = {"yogurt": _LIBRARY_SEED_ATTRIBUTES["yogurt"], "beans": _BEANS_ATTRIBUTES}
+_MAX_MINED_ATTRIBUTES = 6
+
+
+def _mined_boolean_attributes(candidate_terms: list[dict[str, Any]], k: int = _MAX_MINED_ATTRIBUTES) -> list[dict[str, Any]]:
+    """Turn the top `k` mined candidate terms (see
+    attributes/generator.py::_candidate_boolean_terms) into boolean attribute
+    definitions -- the literal token, applied identically on both sides, since this
+    mock has no way to recognize a cross-language synonym for it (see that function's
+    docstring)."""
+    attrs = []
+    for c in candidate_terms[:k]:
+        term = c["term"]
+        attrs.append(
+            {
+                "name": f"has_{term}",
+                "kind": "boolean",
+                "description": f"Does the text mention '{term}'?",
+                "fndds_keywords": [term],
+                "off_keywords": [term],
+            }
+        )
+    return attrs
+
+
+_SEED_ATTRIBUTES = {"yogurt": _LIBRARY_SEED_ATTRIBUTES["yogurt"]}
 
 
 class MockChatClient(ChatClient):
@@ -204,14 +178,56 @@ class MockChatClient(ChatClient):
     def _blocking_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         block = payload["block_name"]
         seed = _SEED_KEYWORDS.get(block, [block])
-        fndds_mined = _top_tokens(payload.get("fndds_sample_descriptions", []), side="fndds")
-        off_mined = _top_tokens(payload.get("off_sample_product_names", []), side="off")
+        corpus_stats = payload.get("corpus_stats")
+        # Only the OFF side (~4.66M rows) carries real memory risk from an overly-broad
+        # keyword -- FNDDS (~5.4K rows total) doesn't need (and shouldn't get) the same
+        # genericness bar; see profiling.OFF_GENERIC_TERM_MIN_DOC_COUNT.
+        fndds_mined = _top_tokens(payload.get("fndds_sample_descriptions", []), reject=set())
+        off_mined = _top_tokens(
+            payload.get("off_sample_product_names", []), reject=_reject_terms(corpus_stats, "off")
+        )
+
+        # Categories whose own (short, human-curated) name contains the block's name --
+        # a structured membership signal, far more precise than keyword substring
+        # matching against free text, and immune to the boilerplate-annotation problem
+        # keywords have (see rules.py's module docstring). Doesn't use the withheld
+        # calibration ground-truth term (CANONICAL_BLOCK_TERMS) -- block_name itself is
+        # already given in every prompt regardless.
+        category_options = payload.get("category_options") or {}
+        fndds_categories = set(_matching_categories(category_options.get("fndds", []), block))
+        off_categories = set(_matching_categories(category_options.get("off", []), block))
 
         prev = payload.get("previous_rule")
         metrics = payload.get("previous_round_metrics")
+        # Carried forward unconditionally (not gated on `metrics` existing): a seed rule
+        # (see blocking/seed_rules.py) or a prior round's own additions are things
+        # already known to be needed/useful, not something this mock has any mechanism
+        # to propose on its own, so the only sensible default is "don't drop what's
+        # already there" -- this matters most for round 0 *with* a seed rule but no
+        # metrics yet, which the keyword-widening logic below (gated on `metrics`)
+        # doesn't otherwise account for.
+        fndds_exclude = (prev or {}).get("fndds", {}).get("exclude_keywords", [])
+        off_exclude = (prev or {}).get("off", {}).get("exclude_keywords", [])
+        fndds_categories |= set((prev or {}).get("fndds", {}).get("categories", []))
+        off_categories |= set((prev or {}).get("off", {}).get("categories", []))
+        seed_fndds_kw = set(seed) | set((prev or {}).get("fndds", {}).get("keywords", []))
+        seed_off_kw = set(seed) | set((prev or {}).get("off", {}).get("keywords", []))
 
-        fndds_kw = sorted(set(seed) | set(fndds_mined))
-        off_kw = sorted(set(seed) | set(off_mined))
+        # When a clean matching category exists, trust it and don't widen beyond the
+        # seed vocabulary via speculative keyword mining: mined candidates are drawn
+        # from real in-block sample text, but words that are common there can *also* be
+        # common in totally unrelated foods' own descriptions (e.g. "whole"/"fruit"/
+        # "plain" show up in "whole wheat muffins", "fruit salad", "plain pretzels" --
+        # not just yogurt), and this mock has no way to distinguish that from a
+        # genuinely block-specific term the way a real LLM's world knowledge could.
+        # Verified: for yogurt, seed+category alone is 62 FNDDS records with zero false
+        # positives, vs. 402 records (85% false positives) once "flavors"/"fruit"/
+        # "plain"/"whole" get mined in on top. Falls back to mining when no matching
+        # category was found (e.g. a block with no clean corresponding taxonomy entry).
+        fndds_kw = sorted(seed_fndds_kw) if fndds_categories else sorted(seed_fndds_kw | set(fndds_mined))
+        off_kw = sorted(seed_off_kw) if off_categories else sorted(seed_off_kw | set(off_mined))
+        fndds_categories = sorted(fndds_categories)
+        off_categories = sorted(off_categories)
 
         if prev and metrics:
             # Widen if pair completeness is low; otherwise keep stable (simulates
@@ -223,13 +239,16 @@ class MockChatClient(ChatClient):
             else:
                 fndds_kw = prev.get("fndds", {}).get("keywords", fndds_kw)
                 off_kw = prev.get("off", {}).get("keywords", off_kw)
+            fndds_categories = prev.get("fndds", {}).get("categories", fndds_categories)
+            off_categories = prev.get("off", {}).get("categories", off_categories)
 
         return {
-            "fndds": {"keywords": fndds_kw, "exclude_keywords": []},
-            "off": {"keywords": off_kw, "exclude_keywords": []},
+            "fndds": {"keywords": fndds_kw, "categories": fndds_categories, "exclude_keywords": fndds_exclude},
+            "off": {"keywords": off_kw, "categories": off_categories, "exclude_keywords": off_exclude},
             "rationale": (
                 f"[mock] seed vocabulary + top frequent tokens mined from the '{block}' "
-                "sample descriptions on each side."
+                "sample descriptions on each side, plus any on-topic category found "
+                "among plausibly in-block records."
             ),
         }
 
@@ -241,10 +260,22 @@ class MockChatClient(ChatClient):
         correlation_flags = payload.get("correlation_flags") or []
 
         if existing is None:
-            attrs = _SEED_ATTRIBUTES.get(block, [])
+            if block in _SEED_ATTRIBUTES:
+                return {
+                    "attributes": _SEED_ATTRIBUTES[block],
+                    "rationale": f"[mock] seed attribute set for block '{block}'.",
+                }
+            # No seed (from-scratch block, e.g. beans): a small hand-curated exception
+            # for categorical attributes needing domain-synonym grouping, plus boolean
+            # attributes mined from this block's own data (see _mined_boolean_attributes).
+            categorical = _CATEGORICAL_EXCEPTIONS.get(block, [])
+            mined = _mined_boolean_attributes(payload.get("candidate_terms") or [])
             return {
-                "attributes": attrs,
-                "rationale": f"[mock] seed attribute set for block '{block}'.",
+                "attributes": categorical + mined,
+                "rationale": (
+                    f"[mock] {len(categorical)} hand-curated categorical attribute(s) + "
+                    f"{len(mined)} boolean attribute(s) mined from this block's own text."
+                ),
             }
 
         # Revision: drop the second attribute in each correlated pair (simple
