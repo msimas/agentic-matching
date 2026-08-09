@@ -24,7 +24,7 @@ import re
 
 import duckdb
 
-from agentic_matching.config import CALIBRATION_DIR, FDC_DUCKDB_PATH, OFF_PARQUET
+from agentic_matching.config import CALIBRATION_DIR, FDC_DUCKDB_PATH, OFF_PARQUET, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -218,5 +218,5 @@ def build(holdout_frac: float = 0.3, n_per_stratum: int = 25) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     build()

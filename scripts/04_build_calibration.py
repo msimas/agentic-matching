@@ -4,12 +4,10 @@ SME spot-check sample, and train/holdout split."""
 
 from __future__ import annotations
 
-import logging
-
 import typer
 
 from agentic_matching.calibration import build
-from agentic_matching.config import CALIBRATION_DIR
+from agentic_matching.config import CALIBRATION_DIR, configure_logging
 
 app = typer.Typer(add_completion=False)
 
@@ -19,7 +17,7 @@ def main(
     holdout_frac: float = typer.Option(0.3, help="Fraction of gold GTIN groups held out for evaluation."),
     n_per_stratum: int = typer.Option(25, help="Max SME spot-check rows per branded_food_category."),
 ) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     build(holdout_frac=holdout_frac, n_per_stratum=n_per_stratum)
     typer.echo(f"Calibration artifacts written to {CALIBRATION_DIR}")
 

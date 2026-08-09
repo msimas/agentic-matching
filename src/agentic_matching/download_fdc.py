@@ -17,7 +17,7 @@ from pathlib import Path
 
 import httpx
 
-from agentic_matching.config import FDC_DATASETS, RAW_FDC_DIR, ZIPS_DIR
+from agentic_matching.config import FDC_DATASETS, RAW_FDC_DIR, ZIPS_DIR, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ def download_and_extract_all(force: bool = False) -> dict[str, Path]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     dirs = download_and_extract_all()
     for slug, d in dirs.items():
         n_csv = len(list(d.rglob("*.csv")))

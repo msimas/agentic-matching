@@ -4,12 +4,10 @@ fields into a single search-text Parquet file (used by every downstream stage)."
 
 from __future__ import annotations
 
-import logging
-
 import typer
 
 from agentic_matching import off_text
-from agentic_matching.config import PARQUET_FDC_DIR
+from agentic_matching.config import PARQUET_FDC_DIR, configure_logging
 from agentic_matching.csv_to_parquet import convert_all
 
 app = typer.Typer(add_completion=False)
@@ -17,7 +15,7 @@ app = typer.Typer(add_completion=False)
 
 @app.command()
 def main(force: bool = typer.Option(False, help="Re-convert even if Parquet outputs already exist.")) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     out = convert_all(force=force)
     for slug, paths in out.items():
         typer.echo(f"{slug}: {len(paths)} tables -> {PARQUET_FDC_DIR / slug}")

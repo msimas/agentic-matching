@@ -4,12 +4,11 @@ for visual evaluation of the matches (see linking/charts.py)."""
 
 from __future__ import annotations
 
-import logging
 from typing import Callable
 
 import typer
 
-from agentic_matching.config import BLOCKS
+from agentic_matching.config import BLOCKS, configure_logging
 from agentic_matching.linking import charts
 
 app = typer.Typer(add_completion=False, help=__doc__)
@@ -43,7 +42,7 @@ def waterfall(
 ) -> None:
     """Waterfall chart: how each comparison contributed to the final match score, for
     a selection of pairs."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     _check_block(block)
     _run(lambda: charts.waterfall_chart(block, n=n, mode=mode, threshold=threshold))  # type: ignore[arg-type]
 
@@ -51,7 +50,7 @@ def waterfall(
 @app.command()
 def weights(block: str = typer.Option(..., "--block", help=f"Block to visualize: one of {BLOCKS}")) -> None:
     """Match weights chart: the model's learned strength of evidence per comparison level."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     _check_block(block)
     _run(lambda: charts.match_weights_chart(block))
 
@@ -62,7 +61,7 @@ def histogram(
     threshold: float = typer.Option(0.0, help="Minimum match_probability to consider."),
 ) -> None:
     """Histogram of match weights across every predicted pair in the block."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     _check_block(block)
     _run(lambda: charts.match_weights_histogram(block, threshold=threshold))
 
@@ -74,7 +73,7 @@ def dashboard(
     num_example_rows: int = typer.Option(3, help="Example rows per comparison-vector pattern."),
 ) -> None:
     """Interactive comparison-viewer dashboard for browsing predicted pairs."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     _check_block(block)
     _run(lambda: charts.comparison_viewer_dashboard(block, threshold=threshold, num_example_rows=num_example_rows))
 

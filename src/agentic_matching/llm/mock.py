@@ -13,6 +13,7 @@ from `mock` to use it for real.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from typing import Any
@@ -20,6 +21,8 @@ from typing import Any
 from agentic_matching.attributes.seed_rules import SEED_ATTRIBUTES as _LIBRARY_SEED_ATTRIBUTES
 from agentic_matching.blocking.rules import NEVER_USEFUL_KEYWORDS as _STOPWORDS
 from agentic_matching.llm.client import ChatClient
+
+log = logging.getLogger(__name__)
 
 # _STOPWORDS (aliased from blocking/rules.py's NEVER_USEFUL_KEYWORDS -- one shared
 # source of truth, since it's now also hard-enforced there on every proposed rule
@@ -164,12 +167,20 @@ class MockChatClient(ChatClient):
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> dict[str, Any]:
+        # No real LLM call happens here, but logging the query this WOULD have been
+        # sent as keeps LLM_DEVICE=mock and =ollama consistent in what shows up in the
+        # console -- switching backends shouldn't also silently change what's visible.
+        # DEBUG, not INFO, matching llm/client.py's LLMClient (see its comment).
+        log.debug("Mock LLM query (no real call made):\n----- system -----\n%s\n----- user -----\n%s", system, user)
         payload = json.loads(user)
         if "fndds_sample_descriptions" in payload:
-            return self._blocking_response(payload)
-        if "sample_candidate_pairs" in payload:
-            return self._attribute_response(payload)
-        raise ValueError(f"MockChatClient: unrecognized prompt payload keys: {list(payload)}")
+            response = self._blocking_response(payload)
+        elif "sample_candidate_pairs" in payload:
+            response = self._attribute_response(payload)
+        else:
+            raise ValueError(f"MockChatClient: unrecognized prompt payload keys: {list(payload)}")
+        log.debug("Mock LLM response:\n%s", json.dumps(response, indent=2, default=str))
+        return response
 
     # -- blocking -----------------------------------------------------------------
 

@@ -11,7 +11,13 @@ from typing import Any, Literal
 
 import duckdb
 
-from agentic_matching.config import FDC_DUCKDB_PATH, OFF_PARQUET, OFF_SEARCH_TEXT_PARQUET, PROFILING_DIR
+from agentic_matching.config import (
+    FDC_DUCKDB_PATH,
+    OFF_PARQUET,
+    OFF_SEARCH_TEXT_PARQUET,
+    PROFILING_DIR,
+    configure_logging,
+)
 
 log = logging.getLogger(__name__)
 
@@ -200,7 +206,7 @@ def top_category_values(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     build(force=True)
     print(f"n_fndds={n_records('fndds')} n_off={n_records('off')}")
     print("off high-frequency terms:", [t["term"] for t in high_frequency_terms("off", k=15)])

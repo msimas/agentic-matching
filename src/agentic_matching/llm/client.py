@@ -60,6 +60,19 @@ class LLMClient(ChatClient):
     ) -> dict[str, Any]:
         last_err: Exception | None = None
         for attempt in range(max_retries + 1):
+            # Full query/response logged at DEBUG, not INFO -- this is the actual
+            # reasoning input/output for every agent-loop call, invaluable when
+            # diagnosing a bad or surprising proposal, but full prompts on every round
+            # are too verbose to want on by default. Set LOG_LEVEL=DEBUG (see
+            # config.configure_logging) to see it.
+            log.debug(
+                "LLM request (model=%s, attempt %d/%d):\n----- system -----\n%s\n----- user -----\n%s",
+                self.settings.model,
+                attempt + 1,
+                max_retries + 1,
+                system,
+                user,
+            )
             resp = self._client.chat.completions.create(
                 model=self.settings.model,
                 messages=[
@@ -71,6 +84,7 @@ class LLMClient(ChatClient):
                 response_format={"type": "json_object"},
             )
             content = resp.choices[0].message.content or ""
+            log.debug("LLM response (attempt %d):\n%s", attempt + 1, content)
             try:
                 return json.loads(content)
             except json.JSONDecodeError as e:

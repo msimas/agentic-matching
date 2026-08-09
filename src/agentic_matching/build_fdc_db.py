@@ -18,7 +18,7 @@ import logging
 
 import duckdb
 
-from agentic_matching.config import FDC_DUCKDB_PATH, PARQUET_FDC_DIR
+from agentic_matching.config import FDC_DUCKDB_PATH, PARQUET_FDC_DIR, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -227,7 +227,7 @@ def build(force: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     build(force=True)
     con = duckdb.connect(str(FDC_DUCKDB_PATH), read_only=True)
     for view in ("v_fndds", "v_sr_legacy", "v_foundation", "v_branded"):

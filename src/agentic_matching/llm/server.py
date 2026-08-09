@@ -19,7 +19,7 @@ import time
 
 import httpx
 
-from agentic_matching.config import LLMSettings, llm_settings
+from agentic_matching.config import LLMSettings, configure_logging, llm_settings
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     # server that's already listening (llm/client.py connects to
     # LLM_BASE_URL/LLM_HOST:LLM_PORT), so if `LLM_BASE_URL` is unset and no server is
     # running, they'll fail with a connection error the first time an LLM call is made.
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     manager = get_server_manager()
     try:
         manager.start()

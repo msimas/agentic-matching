@@ -4,11 +4,9 @@ score against the Branded<->OFF holdout proxy -> LLM revises attributes -> retra
 
 from __future__ import annotations
 
-import logging
-
 import typer
 
-from agentic_matching.config import BLOCKS
+from agentic_matching.config import BLOCKS, configure_logging
 from agentic_matching.linking.agent_loop import run_linking_agent
 
 app = typer.Typer(add_completion=False)
@@ -18,7 +16,7 @@ app = typer.Typer(add_completion=False)
 def main(
     block: str = typer.Option(..., "--block", help=f"Block to run: one of {BLOCKS}"),
 ) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     if block not in BLOCKS:
         raise typer.BadParameter(f"--block must be one of {BLOCKS}, got {block!r}")
     rounds = run_linking_agent(block)

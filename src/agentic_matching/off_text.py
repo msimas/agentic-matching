@@ -9,7 +9,7 @@ import logging
 
 import duckdb
 
-from agentic_matching.config import OFF_PARQUET, OFF_SEARCH_TEXT_PARQUET
+from agentic_matching.config import OFF_PARQUET, OFF_SEARCH_TEXT_PARQUET, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -45,5 +45,5 @@ def build(force: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     build(force=True)

@@ -6,6 +6,8 @@ variables here (see .env.example) so no other module needs to change when they d
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -112,3 +114,23 @@ class AgentLoopSettings(BaseSettings):
 
 llm_settings = LLMSettings()
 agent_loop_settings = AgentLoopSettings()
+
+
+def configure_logging() -> None:
+    """Call once, at the top of a script's `if __name__ == "__main__"` block, to set
+    up console logging -- replaces the `logging.basicConfig(level=logging.INFO, ...)`
+    line every script/entry point previously duplicated.
+
+    Respects LOG_LEVEL (default INFO; not under LLMSettings/AgentLoopSettings' `LLM_`/
+    `AGENT_` prefixes since it's not specific to either -- it's the standard,
+    unprefixed name most CLI tools use for this). Set LOG_LEVEL=DEBUG to also see
+    llm/client.py's and llm/mock.py's full LLM query/response logging, which is
+    deliberately gated at DEBUG rather than INFO: it's the actual reasoning input/output
+    for every agent-loop call, invaluable when diagnosing a bad or surprising proposal,
+    but too verbose (full prompts, every round) to want on by default.
+    """
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        level = logging.INFO
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import duckdb
 
-from agentic_matching.config import FDC_DATASETS, PARQUET_FDC_DIR, RAW_FDC_DIR
+from agentic_matching.config import FDC_DATASETS, PARQUET_FDC_DIR, RAW_FDC_DIR, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def convert_all(force: bool = False) -> dict[str, list[Path]]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_logging()
     out = convert_all()
     for slug, paths in out.items():
         print(f"{slug}: {len(paths)} tables -> {PARQUET_FDC_DIR / slug}")
