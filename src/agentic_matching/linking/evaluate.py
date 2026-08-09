@@ -244,6 +244,39 @@ def attribute_discriminative_power(
     )
 
 
+def best_match_per_off(predictions: pd.DataFrame, min_probability: float = 0.0) -> pd.DataFrame:
+    """Collapse `predictions` (every FNDDS<->OFF candidate pair splink scored) down to
+    the single best (highest match_probability) FNDDS record per OFF record.
+
+    This is the actual deliverable this pipeline exists to produce: the real goal is
+    attaching nutritional information (FNDDS) to commercial products (OFF today; a
+    proprietary retail catalog like Circana in a real deployment -- nothing here is
+    OFF-specific, it only assumes a `unique_id_r` column identifying the "commercial
+    product" side, same as the rest of this module), and a commercial product should
+    end up with AT MOST ONE nutrition profile attached, not several competing FNDDS
+    candidates. `matches_<block>_round<N>.csv` (export_predictions_csv, below) is the
+    SME review artifact showing every candidate pair for diagnosis; this is the
+    downstream-consumable result.
+
+    Deliberately does NOT also enforce uniqueness on the FNDDS side (`unique_id_l`) --
+    one FNDDS nutrition profile legitimately applies to many distinct commercial
+    products (e.g. many different "Black Beans" brands should all be able to attach to
+    the same "Black beans, canned" FNDDS record), so that direction is not a duplicate
+    to collapse the way multiple FNDDS candidates for one OFF record are.
+
+    `min_probability` defaults to 0.0 (matching export_predictions_csv's own
+    reasoning: confidence is conveyed by the match_probability column, not a cutoff
+    baked into this function) -- pass a real threshold if you want the output itself
+    gated on a decision boundary instead of left to the caller/reviewer.
+    """
+    if predictions.empty:
+        return predictions
+    df = predictions[predictions["match_probability"] >= min_probability]
+    if df.empty:
+        return df
+    return df.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_r", keep="first")
+
+
 def export_predictions_csv(
     predictions: pd.DataFrame, attrs: list[dict[str, Any]], out_path: Path, top_n: int | None = 5000
 ) -> int:

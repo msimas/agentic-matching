@@ -291,6 +291,13 @@ def run_blocking_agent(
             notes=notes,
             linking_feedback=linking_feedback,
         )
+        log.info(
+            "block '%s' round %d: asking the LLM to %s the blocking rule -- this is "
+            "the slow step, everything else in this loop finishes in seconds.",
+            block_name,
+            round_idx,
+            "propose" if round_idx == 0 else "revise",
+        )
         try:
             response = client.complete_json(sys_p, user_p)
             rule = {"fndds": response["fndds"], "off": response["off"]}

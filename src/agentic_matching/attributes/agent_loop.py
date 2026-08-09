@@ -213,6 +213,13 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
             candidate_terms=candidate_terms,
             guidance=guidance,
         )
+        log.info(
+            "block '%s' round %d: asking the LLM to %s matching attributes -- this is "
+            "the slow step, everything else in this loop finishes in seconds.",
+            block_name,
+            round_idx,
+            "propose" if round_idx == 0 else "revise",
+        )
         try:
             response = client.complete_json(sys_p, user_p)
             attrs = response["attributes"]

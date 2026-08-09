@@ -5,6 +5,11 @@ predictions summary, degeneracy flags, and holdout evaluation are logged to
 data/artifacts/linking_<block>_round<N>.json for SME review, and the full set of
 predicted pairs (not just the JSON's top/bottom-N examples) is written to
 data/artifacts/matches_<block>_round<N>.csv for direct inspection.
+
+data/artifacts/final_matches_<block>.csv (no round number -- overwritten each round, so
+it always reflects the latest run, same pattern as attributes/generated/<block>/
+latest.json) is the actual deliverable: one best FNDDS record per OFF/commercial-product
+record (see evaluate.best_match_per_off), not every candidate pair.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings
 from agentic_matching.linking.evaluate import (
     attribute_discriminative_power,
+    best_match_per_off,
     export_predictions_csv,
     plausibility_report,
     score_against_holdout,
@@ -47,8 +53,10 @@ class LinkingRound:
     # while a low *raw* candidate count means the blocking rule itself left the model
     # with too little to work with regardless of attributes.
     n_candidate_pairs: int
+    n_final_matches: int
     rationale: str
     matches_csv: str
+    final_matches_csv: str
 
 
 def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
@@ -105,6 +113,19 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             len(all_predictions),
         )
 
+        # The actual deliverable (see this module's docstring): one best FNDDS record
+        # per OFF/commercial-product record, not every candidate. No round number --
+        # always reflects this (latest) round, so a downstream consumer always reads
+        # the current best output without needing to know which round number "won".
+        final_matches = best_match_per_off(all_predictions)
+        final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
+        n_final_written = export_predictions_csv(final_matches, attrs, final_matches_csv_path, top_n=None)
+        log.info(
+            "Wrote %s (%d OFF records, each with its single best FNDDS match)",
+            final_matches_csv_path,
+            n_final_written,
+        )
+
         rationale = f"round {round_idx} trained with {len(attrs)} attributes"
         rounds.append(
             LinkingRound(
@@ -115,8 +136,10 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 attribute_discriminative_power=discriminative_power,
                 plausibility=plausibility,
                 n_candidate_pairs=len(all_predictions),
+                n_final_matches=n_final_written,
                 rationale=rationale,
                 matches_csv=str(matches_csv_path),
+                final_matches_csv=str(final_matches_csv_path),
             )
         )
         _write_artifact(block_name, rounds[-1])
@@ -153,6 +176,13 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 "attribute_discriminative_power": discriminative_power,
             },
             guidance=get_seed_attribute_notes(block_name),
+        )
+        log.info(
+            "block '%s' round %d: asking the LLM to revise matching attributes based "
+            "on this round's linking results -- this is the slow step, everything "
+            "else in this loop (splink training, scoring) finishes in seconds.",
+            block_name,
+            round_idx,
         )
         try:
             response = client.complete_json(sys_p, user_p)

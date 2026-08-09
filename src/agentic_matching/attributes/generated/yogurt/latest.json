@@ -2,19 +2,21 @@
   {
     "name": "is_greek",
     "kind": "boolean",
-    "description": "Indicates whether the product is Greek-style yogurt, based on explicit keywords in both records.",
+    "description": "Indicates whether the yogurt is Greek-style, based on presence of 'greek', 'grec', or 'grecque' in the description or name.",
     "fndds_keywords": [
-      "greek"
+      "greek",
+      "grec"
     ],
     "off_keywords": [
       "greek",
-      "grec"
+      "grec",
+      "grecque"
     ]
   },
   {
     "name": "fat_level",
     "kind": "categorical",
-    "description": "Fat content tier based on milk type (fat-free, low-fat, full-fat), derived from milk type descriptors in both records.",
+    "description": "Categorizes yogurt fat content based on milk type and fat descriptors: fat-free, low-fat, or full-fat.",
     "categories": {
       "fat_free": {
         "fndds_keywords": [
@@ -57,7 +59,7 @@
   {
     "name": "flavor",
     "kind": "categorical",
-    "description": "Specific flavor of the yogurt, based on observed flavors in the sample data (vanilla, strawberry, blueberry, peach, plain).",
+    "description": "Specific flavor of yogurt, derived from observed flavors in the sample pairs (e.g., vanilla, strawberry, blueberry, peach, plain, fruit blend).",
     "categories": {
       "vanilla": {
         "fndds_keywords": [
@@ -84,8 +86,8 @@
         ],
         "off_keywords": [
           "blueberry",
-          "bleu",
-          "blue"
+          "acacia",
+          "blueberry"
         ]
       },
       "peach": {
@@ -97,6 +99,19 @@
           "p\u00eache"
         ]
       },
+      "fruit_blend": {
+        "fndds_keywords": [
+          "fruit",
+          "fruit blend"
+        ],
+        "off_keywords": [
+          "fruit",
+          "fruits rouges",
+          "fruits",
+          "fraise",
+          "framboise"
+        ]
+      },
       "plain": {
         "fndds_keywords": [
           "plain"
@@ -104,7 +119,7 @@
         "off_keywords": [
           "plain",
           "nature",
-          "without flavor"
+          "natural"
         ]
       }
     }

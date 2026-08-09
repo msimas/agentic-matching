@@ -11,8 +11,10 @@ def _round(n_candidate_pairs: int, degeneracy_flags=None, f1=0.5, round_idx=0) -
         attribute_discriminative_power=[],
         plausibility={"n_pairs": 3},
         n_candidate_pairs=n_candidate_pairs,
+        n_final_matches=0,
         rationale="test",
         matches_csv="unused.csv",
+        final_matches_csv="unused_final.csv",
     )
 
 

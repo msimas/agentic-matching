@@ -27,6 +27,12 @@ def main(
             f"precision={ev.get('precision')} recall={ev.get('recall')} f1={ev.get('f1')} "
             f"n_pairs={r.plausibility.get('n_pairs')} -> {r.matches_csv}"
         )
+    if rounds:
+        last = rounds[-1]
+        typer.echo(
+            f"final deliverable: {last.n_final_matches} OFF records with a best FNDDS "
+            f"match attached -> {last.final_matches_csv}"
+        )
 
 
 if __name__ == "__main__":

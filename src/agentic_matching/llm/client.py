@@ -73,6 +73,16 @@ class LLMClient(ChatClient):
                 system,
                 user,
             )
+            # At INFO (not DEBUG) -- unlike the full prompt dump above, this is the one
+            # message every caller needs to see by default: an LLM call is the only
+            # slow step in these agent loops (everything else -- splink training, SQL
+            # queries -- finishes in seconds), so without this the program can look
+            # hung for a minute or more with no indication of what it's doing.
+            log.info(
+                "Waiting for LLM response (model=%s%s)...",
+                self.settings.model,
+                f", retry {attempt}/{max_retries}" if attempt else "",
+            )
             resp = self._client.chat.completions.create(
                 model=self.settings.model,
                 messages=[

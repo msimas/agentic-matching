@@ -41,6 +41,20 @@ writes every predicted FNDDS<->OFF pair (not just the JSON's top/bottom-10) to
 descending, with each matching attribute's value on both sides alongside it — open
 that directly in a spreadsheet to inspect the actual match results.
 
+**`data/artifacts/final_matches_<block>.csv`** (no round number — overwritten each
+round, always reflects the latest run) is the actual deliverable, distinct from the
+review CSV above: `linking/evaluate.py::best_match_per_off` collapses every candidate
+pair down to the single best (highest `match_probability`) FNDDS record per OFF/
+commercial-product record. The real goal here is attaching nutritional information
+(FNDDS) to commercial products — a product should end up with *one* nutrition profile
+attached, not several competing FNDDS candidates — while one FNDDS record can
+legitimately attach to many different commercial products (many brands' "Black Beans"
+can all point at the same "Black beans, canned" nutrition profile), so only the OFF
+side is deduplicated. Nothing about this assumes OFF specifically: it only needs a
+`unique_id_r` column identifying the commercial-product side, so the same pipeline
+would work unchanged against a proprietary retail catalog (e.g. Circana) substituted
+for OFF.
+
 ## Outer loop: blocking<->linking feedback (`scripts/09_run_outer_loop.py`)
 
 `linking/agent_loop.py`'s inner loop only ever revises the *attribute* set — it never
