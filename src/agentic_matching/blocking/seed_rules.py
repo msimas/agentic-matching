@@ -15,6 +15,14 @@ Unlike attributes/library.py's SEED_ATTRIBUTES, this dict starts empty by defaul
 every block (yogurt and beans both propose blocking rules fully from scratch, as
 described in PLAN.md) -- add an entry only when you have real domain knowledge worth
 seeding.
+
+An entry may also carry a "notes" key: a freeform prompt fragment (not a structured
+keyword/category/exclude_keywords list) for domain knowledge that doesn't fit that
+schema -- e.g. "these two dish names must refer to the same specific vegetable, not just
+both be 'a fried vegetable'". Unlike "fndds"/"off", which only seed round 0 (the LLM's
+own revised rule replaces them from round 1 on -- see run_blocking_agent), "notes" is
+echoed to the LLM on *every* round via build_blocking_prompt, since it's persistent
+guidance about the block's domain, not part of the rule state being iterated on.
 """
 
 from __future__ import annotations
@@ -37,9 +45,21 @@ SEED_BLOCKING_RULES: dict[str, dict[str, Any]] = {
             # a meaningful share of them breaded fish/shrimp/cheese, not vegetables.
             "exclude_keywords": ["fish", "shrimp", "prawn", "tilapia", "haddock", "flounder", "cod", "cheese", "chicken", "fry", "fries", "french fries"],
         },
+        "notes": (
+            "This block covers several distinct vegetables prepared fried/breaded "
+            "(onion, mushroom, cauliflower, eggplant, squash, green tomato, green bean, "
+            "broccoli, pickle, sweet potato, ...), not one single dish -- a record is "
+            "in-block if it's ANY of these, so don't narrow the keyword/category lists "
+            "down to only the vegetable(s) that happen to dominate the samples you're "
+            "shown."
+        ),
     },
 }
 
 
 def get_seed_rule(block_name: str) -> dict[str, Any] | None:
     return SEED_BLOCKING_RULES.get(block_name)
+
+
+def get_seed_notes(block_name: str) -> str | None:
+    return SEED_BLOCKING_RULES.get(block_name, {}).get("notes")

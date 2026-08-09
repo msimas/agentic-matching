@@ -94,6 +94,71 @@ def get_seed_attributes(block_name: str) -> list[dict[str, Any]] | None:
     return SEED_ATTRIBUTES.get(block_name)
 
 
+# Freeform prompt fragments for blocks that need domain guidance the structured
+# {name, kind, fndds_keywords/off_keywords} attribute schema can't express on its own --
+# e.g. "these two attributes must agree on WHICH specific thing, not just that both have
+# *a* thing of that general kind". Unlike SEED_ATTRIBUTES (yogurt's complete,
+# hand-authored attribute set), a note here doesn't replace the LLM's own proposal -- it
+# is echoed alongside it (see generator.build_attribute_prompt's "guidance" parameter)
+# on every round, as persistent context, not something the LLM's revision iterates away.
+SEED_ATTRIBUTE_NOTES: dict[str, str] = {
+    "breaded_vegetables": (
+        "This block spans many distinct vegetables (onion, mushroom, cauliflower, "
+        "eggplant, squash, tomato, green bean, broccoli, pickle, sweet potato, ...) "
+        "prepared the same way (fried/breaded/battered) -- a generic 'is this a fried/ "
+        "breaded vegetable?' attribute can't tell a true match from a false one on its "
+        "own, since it's True for nearly every in-block record regardless of which "
+        "vegetable it actually is. Two records should only be scored as a likely match "
+        "if they agree on the specific vegetable, not just the preparation style -- "
+        "propose a categorical attribute (e.g. vegetable_type) whose categories are the "
+        "actual vegetable names, grounded in this block's own samples/candidate_terms, "
+        "rather than (or in addition to) boolean attributes about preparation style "
+        "alone.\n"
+        "Verified this matters in practice on this exact block: before this guidance "
+        "existed, the top-scoring predicted match was 'Vegetable tempura' <-> "
+        "'Vegetable pakora' at 0.87 -- two different dishes that only share a generic "
+        "'fried vegetable' style, not a specific vegetable identity. After adding a "
+        "vegetable_type categorical attribute, the top match became 'Fried onion "
+        "rings' <-> real onion-ring products (0.88-0.99, vegetable_type agreeing on "
+        "'onion' both sides), and pakora/tempura stopped outscoring genuine "
+        "same-vegetable matches."
+    ),
+    "beans": (
+        "Like breaded_vegetables, this block spans many distinct bean/legume types "
+        "(kidney, pinto, black, lima, garbanzo/chickpea, navy, soy, green/string, "
+        "...) -- a match should agree on the SPECIFIC type, not just 'both are some "
+        "kind of bean'. Past rounds for this block have proposed the right idea but "
+        "the wrong shape: several separate boolean attributes (is_kidney, is_pinto, "
+        "is_lima, is_soy, is_green, ...), each True/False independently -- these are "
+        "mutually exclusive facets of one underlying property (a product's beans are "
+        "kidney OR pinto OR ..., not several at once), so modeling them as independent "
+        "booleans violates Fellegi-Sunter's conditional-independence assumption "
+        "(splink evaluates each comparison's contribution to the match score as if it "
+        "were independent evidence, but 'is_kidney=False' and 'is_pinto=True' aren't "
+        "actually independent facts here) and risks the correlation-flag check this "
+        "loop already runs. Prefer ONE categorical attribute (e.g. bean_type) whose "
+        "categories are the specific bean types, grounded in this block's own samples/ "
+        "candidate_terms, over several separate per-type booleans."
+    ),
+    "yogurt": (
+        "A generic 'is this fruit-flavored?' boolean can't tell a true match from a "
+        "false one on its own once both records are already known to be flavored "
+        "yogurts -- it's True for strawberry, blueberry, peach, etc. alike, so two "
+        "records with completely different flavors can still agree on every existing "
+        "attribute (is_greek, fat_level, is_fruit_flavored, is_frozen) purely by "
+        "coincidence. If a match should require agreeing on the SPECIFIC flavor (not "
+        "just 'flavored vs. plain'), propose a categorical attribute (e.g. flavor) "
+        "whose categories are the actual flavors observed in this block's own samples "
+        "(strawberry, blueberry, peach, vanilla, plain, ...), rather than (or in "
+        "addition to) a single is_fruit_flavored/is_plain boolean."
+    ),
+}
+
+
+def get_seed_attribute_notes(block_name: str) -> str | None:
+    return SEED_ATTRIBUTE_NOTES.get(block_name)
+
+
 def apply_attribute(attr: dict[str, Any], text: str | None, side: Side) -> Any:
     """Compute one attribute's value for one record's text on one side."""
     text_l = (text or "").lower()

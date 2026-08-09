@@ -25,7 +25,7 @@ from typing import Any
 import pandas as pd
 
 from agentic_matching.attributes.correlation_check import check_correlations
-from agentic_matching.attributes.library import compute_attribute_values, get_seed_attributes
+from agentic_matching.attributes.library import compute_attribute_values, get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
 from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings
 from agentic_matching.llm.client import ChatClient, get_llm_client
@@ -197,6 +197,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
 
     rounds: list[AttributeRound] = []
     existing = get_seed_attributes(block_name)
+    guidance = get_seed_attribute_notes(block_name)
     correlation_flags: list[dict[str, Any]] = []
     evaluation = None
 
@@ -209,6 +210,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
             evaluation=evaluation,
             field_stats=field_stats,
             candidate_terms=candidate_terms,
+            guidance=guidance,
         )
         try:
             response = client.complete_json(sys_p, user_p)

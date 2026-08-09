@@ -17,6 +17,7 @@ bounded block sizes, costs a few hundred MB to a couple GB, not tens of GB (veri
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -51,6 +52,25 @@ class ChartGenerationError(RuntimeError):
 # non-chart evaluation, only lets the charts render instead of crashing.
 _MIN_PROBABILITY_TWO_RANDOM_RECORDS_MATCH = 1e-8
 
+# Splink's histogram chart bins match weights via DuckDB SQL; on a small/sparse block
+# (few distinct values to bin) DuckDB can return those bin edges as its DECIMAL type
+# rather than DOUBLE, which pandas then carries through as Python Decimal objects --
+# and Decimal isn't JSON-serializable, so Altair's own `.save()` crashes trying to
+# inline the chart's data into the HTML. Verified independent of (not downstream of) the
+# probability_two_random_records_match=0.0 bug above: reproduced with a fully-trained,
+# non-degenerate model (p2r=0.083) on this project's "breaded_vegetables" block once its
+# attribute set grew a categorical attribute (vegetable_type) with several small
+# categories. Altair's own `.save()` accepts a `json_kwds` passthrough to the stdlib
+# `json.dumps` call that actually raises, so converting Decimal -> float there is a
+# targeted fix for exactly this, not a broad monkeypatch of json serialization.
+def _json_default(o: Any) -> Any:
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
+_SAVE_KWARGS: dict[str, Any] = {"json_kwds": {"default": _json_default}}
+
 
 def _build_trained_linker(block_name: str) -> tuple[Linker, list[dict[str, Any]]]:
     attrs = load_latest_attributes(block_name)
@@ -82,11 +102,12 @@ def _run_splink_chart_call(fn, block_name: str, chart_kind: str, degeneracy_flag
     ChartGenerationError that names the block/chart and surfaces this round's
     degeneracy flags (the most common real cause -- e.g. a `probability_two_random_
     records_match` that trained to exactly 0.0 makes splink's own match_weights_chart
-    divide by zero internally; a tiny candidate-pair count can make its histogram
-    binning SQL return a DuckDB DECIMAL type Altair can't JSON-serialize -- both
-    verified against this project's own "breaded_vegetables" block, both bugs in
-    splink's library code, not fixable from here). Not every failure will be
-    degeneracy-caused, so the flags are informational context, not a diagnosis."""
+    divide by zero internally -- both this and the histogram's Decimal-serialization
+    bug, once common on this project's own "breaded_vegetables" block, are worked
+    around above/via _SAVE_KWARGS now, but this wrapper stays as a safety net for
+    whatever's left/any other splink chart bug this project hasn't hit yet). Not every
+    failure will be degeneracy-caused, so the flags are informational context, not a
+    diagnosis."""
     try:
         return fn()
     except Exception as e:
@@ -149,7 +170,7 @@ def waterfall_chart(
         # Altair charts serialize their data lazily -- .save() is where a bad value
         # (e.g. the Decimal-type bug below) actually raises, not chart construction, so
         # both steps need to be inside the same wrapped call to be caught as one.
-        linker.visualisations.waterfall_chart(records, filter_nulls=False).save(str(out_path))
+        linker.visualisations.waterfall_chart(records, filter_nulls=False).save(str(out_path), **_SAVE_KWARGS)
 
     _run_splink_chart_call(_create_and_save, block_name, "waterfall", degeneracy_flags)
     log.info("Wrote %s (%d records, mode=%s)", out_path, len(records), mode)
@@ -165,7 +186,7 @@ def match_weights_chart(block_name: str, out_path: Path | None = None) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _create_and_save() -> None:
-        linker.visualisations.match_weights_chart().save(str(out_path))
+        linker.visualisations.match_weights_chart().save(str(out_path), **_SAVE_KWARGS)
 
     _run_splink_chart_call(_create_and_save, block_name, "match_weights", degeneracy_flags)
     log.info("Wrote %s", out_path)
@@ -180,7 +201,7 @@ def match_weights_histogram(block_name: str, threshold: float = 0.0, out_path: P
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _create_and_save() -> None:
-        linker.visualisations.match_weights_histogram(df_predict).save(str(out_path))
+        linker.visualisations.match_weights_histogram(df_predict).save(str(out_path), **_SAVE_KWARGS)
 
     _run_splink_chart_call(_create_and_save, block_name, "histogram", degeneracy_flags)
     log.info("Wrote %s", out_path)

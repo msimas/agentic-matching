@@ -17,7 +17,7 @@ import duckdb
 from agentic_matching import profiling
 from agentic_matching.blocking.metrics import evaluate_rule
 from agentic_matching.blocking.rules import fndds_predicate_sql, off_predicate_sql
-from agentic_matching.blocking.seed_rules import get_seed_rule
+from agentic_matching.blocking.seed_rules import get_seed_notes, get_seed_rule
 from agentic_matching.config import (
     ARTIFACTS_DIR,
     BLOCKS_DIR,
@@ -252,8 +252,14 @@ def run_blocking_agent(block_name: str, client: ChatClient | None = None) -> lis
     rounds: list[BlockingRound] = []
     # None for most blocks (fully LLM-proposed, as originally designed); a hand-curated
     # starting point for a block with an entry in seed_rules.py (e.g. exclude_keywords
-    # already known to be needed) -- see that module's docstring.
-    prev_rule: dict[str, Any] | None = get_seed_rule(block_name)
+    # already known to be needed) -- see that module's docstring. Only "fndds"/"off"
+    # seed round 0 -- "notes" (below) is echoed every round instead, since it's
+    # persistent domain guidance, not rule state the LLM revises round over round.
+    seed_rule = get_seed_rule(block_name)
+    prev_rule: dict[str, Any] | None = (
+        {"fndds": seed_rule["fndds"], "off": seed_rule["off"]} if seed_rule else None
+    )
+    notes = get_seed_notes(block_name)
     prev_metrics: dict[str, Any] | None = None
 
     for round_idx in range(agent_loop_settings.max_rounds):
@@ -265,6 +271,7 @@ def run_blocking_agent(block_name: str, client: ChatClient | None = None) -> lis
             metrics=prev_metrics,
             corpus_stats=corpus_stats,
             category_options=category_options,
+            notes=notes,
         )
         try:
             response = client.complete_json(sys_p, user_p)

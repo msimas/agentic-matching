@@ -48,7 +48,12 @@ category values among records already plausibly in this block, with counts -- pi
 from these, don't invent category names), each side's catalog size and its most \
 catalog-wide-common terms with what fraction of the *entire* catalog they appear in \
 (not just this block), and, on revision rounds, the pair completeness / reduction ratio \
-achieved by the current rule against a calibration sample plus block sizes.
+achieved by the current rule against a calibration sample plus block sizes. You may \
+also be shown "domain_notes": a short freeform note from a domain expert about this \
+specific block that doesn't fit the structured keyword/category schema (e.g. a block \
+covering several distinct sub-concepts that shouldn't be narrowed down to just the ones \
+dominating the samples) -- treat it as authoritative guidance, weighted alongside \
+everything else you're shown.
 
 Avoid proposing any term from the "catalog_wide_common_terms" list as a standalone \
 keyword unless it is genuinely central to this specific block (e.g. the block's own \
@@ -75,12 +80,19 @@ def build_blocking_prompt(
     metrics: dict[str, Any] | None = None,
     corpus_stats: dict[str, Any] | None = None,
     category_options: dict[str, Any] | None = None,
+    notes: str | None = None,
 ) -> tuple[str, str]:
     payload = {
         "block_name": block_name,
         "fndds_sample_descriptions": fndds_samples[:40],
         "off_sample_product_names": off_samples[:40],
     }
+    if notes:
+        # Freeform domain guidance from blocking/seed_rules.py -- not a structured
+        # keyword/category list, so it wouldn't fit previous_rule's shape; echoed every
+        # round (unlike previous_rule, which only seeds round 0) since it's persistent
+        # knowledge about the block, not rule state being iterated on.
+        payload["domain_notes"] = notes
     if corpus_stats is not None:
         payload["corpus_stats"] = corpus_stats
     if category_options is not None:
@@ -142,6 +154,12 @@ category) within this block's population. Ground any categorical attribute's cat
 values in these observed values rather than inventing category names that may not \
 occur in the actual data.
 
+You may also be shown "domain_guidance": a short freeform note from a domain expert \
+about this specific block that doesn't fit the structured attribute schema (e.g. that \
+matches must agree on which specific sub-concept is involved, not just some shared \
+general property) -- treat it as authoritative and let it directly shape which \
+attributes you propose, alongside everything else you're shown.
+
 You may also be shown "candidate_terms": tokens mined directly from this block's own \
 free text that split its population into a meaningful minority/majority on at least \
 one side (not near-0% or near-100%, which wouldn't discriminate anything), with the \
@@ -190,11 +208,18 @@ def build_attribute_prompt(
     evaluation: dict[str, Any] | None = None,
     field_stats: dict[str, Any] | None = None,
     candidate_terms: list[dict[str, Any]] | None = None,
+    guidance: str | None = None,
 ) -> tuple[str, str]:
     payload: dict[str, Any] = {
         "block_name": block_name,
         "sample_candidate_pairs": sample_pairs[:30],
     }
+    if guidance:
+        # Freeform domain guidance from attributes/library.py's SEED_ATTRIBUTE_NOTES --
+        # echoed every round (not just round 0), same rationale as build_blocking_
+        # prompt's "notes" parameter: persistent context about the block, not state the
+        # LLM's revision is expected to iterate away.
+        payload["domain_guidance"] = guidance
     if field_stats is not None:
         payload["field_stats"] = field_stats
     if candidate_terms:

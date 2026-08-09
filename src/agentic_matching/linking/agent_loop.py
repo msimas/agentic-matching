@@ -16,6 +16,7 @@ from typing import Any
 
 from agentic_matching.attributes.correlation_check import check_correlations
 from agentic_matching.attributes.generator import _pooled_values, load_latest_attributes
+from agentic_matching.attributes.library import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings
@@ -127,6 +128,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             existing_attributes=attrs,
             correlation_flags=correlation_flags or None,
             evaluation={**holdout_eval, "degeneracy_flags": degeneracy_flags},
+            guidance=get_seed_attribute_notes(block_name),
         )
         try:
             response = client.complete_json(sys_p, user_p)
