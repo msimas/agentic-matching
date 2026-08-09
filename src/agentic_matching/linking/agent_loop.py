@@ -21,6 +21,7 @@ from typing import Any
 
 from agentic_matching.attributes.agent_loop import _pooled_values, load_latest_attributes
 from agentic_matching.attributes.metrics import check_correlations
+from agentic_matching.attributes.rules import filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
 from agentic_matching.linking import splink_model
@@ -198,7 +199,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 block_name,
             )
             break
-        new_attrs = response["attributes"]
+        new_attrs = filter_valid_attributes(response["attributes"])
         if {a["name"] for a in new_attrs} == {a["name"] for a in attrs}:
             log.info("LLM proposed no attribute changes for '%s'; stopping.", block_name)
             attrs = new_attrs

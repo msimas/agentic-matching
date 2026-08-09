@@ -25,7 +25,7 @@ from typing import Any
 import pandas as pd
 
 from agentic_matching.attributes.metrics import check_correlations
-from agentic_matching.attributes.rules import compute_attribute_values
+from agentic_matching.attributes.rules import compute_attribute_values, filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
 from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings
@@ -222,7 +222,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
         )
         try:
             response = client.complete_json(sys_p, user_p)
-            attrs = response["attributes"]
+            attrs = filter_valid_attributes(response["attributes"])
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: a real LLM
             # backend can fail a round outright, and rounds already completed (and
