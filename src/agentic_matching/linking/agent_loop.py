@@ -40,6 +40,13 @@ class LinkingRound:
     holdout_evaluation: dict[str, Any]
     attribute_discriminative_power: list[dict[str, Any]]
     plausibility: dict[str, Any]
+    # Raw candidate-pair count at threshold=0.0, *before* the 0.5 "confident match"
+    # filter `plausibility` is computed from -- outer_loop.diagnose_blocking_problem
+    # uses this specifically (not plausibility["n_pairs"]) because a low confident-match
+    # count can be an attribute-quality problem the inner revision loop already handles,
+    # while a low *raw* candidate count means the blocking rule itself left the model
+    # with too little to work with regardless of attributes.
+    n_candidate_pairs: int
     rationale: str
     matches_csv: str
 
@@ -107,6 +114,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 holdout_evaluation=holdout_eval,
                 attribute_discriminative_power=discriminative_power,
                 plausibility=plausibility,
+                n_candidate_pairs=len(all_predictions),
                 rationale=rationale,
                 matches_csv=str(matches_csv_path),
             )

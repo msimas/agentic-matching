@@ -1,15 +1,13 @@
-"""Offline stand-in for the real vLLM-backed client, selected via `LLM_DEVICE=mock`.
+"""Offline stand-in for the real Ollama-backed client, selected via `LLM_DEVICE=mock`.
 
 This project's real LLM path (llm/server.py + llm/client.py) is fully implemented and
-is what should be used for actual runs — see README.md for install instructions. vLLM's
-CPU build is not a regular PyPI wheel (the default `vllm` wheel bundles multi-gigabyte
-CUDA runtime libraries and assumes an NVIDIA GPU), so it isn't installed in every
-environment this code might run in (e.g. this dev sandbox has no usable GPU and no
-pre-built CPU wheel available). MockChatClient implements the exact same `ChatClient`
-interface with deterministic, keyword-frequency-based heuristics so the blocking,
-attribute, and linking agent loops can be exercised, tested, and demoed end-to-end
-without a running LLM server. It is intentionally simple and clearly not a substitute
-for real LLM reasoning — swap `LLM_DEVICE` away from `mock` to use it for real.
+is what should be used for actual runs — see README.md for install instructions.
+MockChatClient implements the exact same `ChatClient` interface with deterministic,
+keyword-frequency-based heuristics so the blocking, attribute, and linking agent loops
+can be exercised, tested, and demoed end-to-end without a running LLM server (e.g. in an
+environment where installing/running Ollama isn't practical). It is intentionally
+simple and clearly not a substitute for real LLM reasoning — swap `LLM_DEVICE` away
+from `mock` to use it for real.
 """
 
 from __future__ import annotations

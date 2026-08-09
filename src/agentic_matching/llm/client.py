@@ -1,9 +1,9 @@
-"""Thin client for talking to the local (or remote) vLLM OpenAI-compatible server.
+"""Thin client for talking to the local (or remote) Ollama OpenAI-compatible server.
 
 Every agent-loop module (blocking, attributes, linking) calls `LLMClient.complete_json`
-and never touches the OpenAI SDK or HTTP directly, so the hosting details (CPU today,
-CUDA/ROCm later, or a mock for offline development) are fully swappable via
-`get_llm_client()` / `LLM_DEVICE`.
+and never touches the OpenAI SDK or HTTP directly, so the hosting details (a real Ollama
+server, or a mock for offline development) are fully swappable via `get_llm_client()` /
+`LLM_DEVICE`.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 class ChatClient(ABC):
-    """Common interface implemented by both the real vLLM-backed client and the
+    """Common interface implemented by both the real Ollama-backed client and the
     offline mock used for development/testing without a running LLM server."""
 
     @abstractmethod
@@ -39,7 +39,7 @@ class ChatClient(ABC):
 
 
 class LLMClient(ChatClient):
-    """Real client, talking to a vLLM (or any OpenAI-compatible) server."""
+    """Real client, talking to an Ollama (or any OpenAI-compatible) server."""
 
     def __init__(self, settings: LLMSettings | None = None) -> None:
         self.settings = settings or llm_settings
@@ -81,7 +81,7 @@ class LLMClient(ChatClient):
 
 def get_llm_client(settings: LLMSettings | None = None) -> ChatClient:
     """Factory: LLM_DEVICE=mock returns the offline stand-in (see llm/mock.py); any
-    other value returns the real vLLM-backed client."""
+    other value returns the real Ollama-backed client."""
     settings = settings or llm_settings
     if settings.device == "mock":
         from agentic_matching.llm.mock import MockChatClient

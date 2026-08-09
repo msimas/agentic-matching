@@ -63,6 +63,14 @@ You will be shown:
     a block covering several distinct sub-concepts that shouldn't be narrowed down to \
     just the ones dominating the samples) -- treat it as authoritative, weighted \
     alongside everything else you're shown.
+  - "prior_linking_findings" (may be absent): a factual finding from a PREVIOUS full \
+    run of this block all the way through attribute-generation and linking, specifically \
+    flagging that the *blocking rule* -- not the attributes -- looked like the \
+    bottleneck (e.g. too few candidate pairs survived for the model to train on, or a \
+    collapsed match-probability prior). This means an earlier version of the rule you're \
+    revising was already tried end-to-end and came up short for a structural reason -- \
+    address it directly (e.g. broaden keywords/categories, reconsider whether an \
+    exclude_keyword is too aggressive), don't just repeat the same shape of rule.
 
 Propose keyword/category lists that are inclusive enough to keep pair completeness \
 high while excluding obviously unrelated products (protect reduction ratio). Reply \
@@ -85,6 +93,7 @@ def build_blocking_prompt(
     corpus_stats: dict[str, Any] | None = None,
     category_options: dict[str, Any] | None = None,
     notes: str | None = None,
+    linking_feedback: str | None = None,
 ) -> tuple[str, str]:
     payload = {
         "block_name": block_name,
@@ -97,6 +106,12 @@ def build_blocking_prompt(
         # round (unlike previous_rule, which only seeds round 0) since it's persistent
         # knowledge about the block, not rule state being iterated on.
         payload["domain_notes"] = notes
+    if linking_feedback:
+        # A finding from outer_loop.diagnose_blocking_problem, echoed every round of a
+        # re-blocking attempt (see run_blocking_agent's `linking_feedback` parameter) --
+        # unlike `notes`, this isn't hand-authored domain knowledge, it's an empirical
+        # observation from a previous end-to-end run of this exact block.
+        payload["prior_linking_findings"] = linking_feedback
     if corpus_stats is not None:
         payload["corpus_stats"] = corpus_stats
     if category_options is not None:

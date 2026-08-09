@@ -1,5 +1,10 @@
 # Agentic Food Data Linkages Constructor — POC
 
+> This is the original planning document, written before implementation began, and is
+> kept as a historical record of initial design intent — it isn't updated to track
+> subsequent implementation decisions (e.g. the LLM backend below now runs on Ollama
+> only; see README.md for the current, up-to-date architecture and setup).
+
 ## Context
 
 We're building a POC of an "LLM-assisted probabilistic record linkage" pipeline that connects
@@ -22,9 +27,9 @@ Scope for this POC, confirmed with the user:
   truth for FNDDS↔OFF, its output is validated by plausibility spot-checks and by the diagnostics
   (block size, intra-block consistency, EM degeneracy checks) rather than precision/recall — this
   limitation is documented, not hidden.
-- LLM hosting: **vLLM CPU backend** now (this box: AMD iGPU with only 4GB VRAM — not viable for
-  an 8B model), architected behind a device-agnostic config so it's a one-variable switch to
-  CUDA later (e.g. when run on an NVIDIA box).
+- LLM hosting: **vLLM CPU backend** now (a modest/GPU-constrained machine won't have enough
+  VRAM for an 8B model), architected behind a device-agnostic config so it's a one-variable
+  switch to CUDA later (e.g. when run on a machine with an NVIDIA GPU).
 - Agentic loop: **bounded autonomous loop, N=3 rounds** (configurable) for both the blocking-rule
   proposal loop and the matching-attribute proposal loop — LLM proposes → metrics computed →
   results fed back to the LLM for revision → repeat, stop early if metrics stabilize. SME review

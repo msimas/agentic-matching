@@ -25,6 +25,10 @@ uv run scripts/05_run_blocking_agent.py --block yogurt   # (or beans)
 uv run scripts/06_run_matching_agent.py --block yogurt
 uv run scripts/07_run_splink_and_evaluate.py --block yogurt
 uv run scripts/08_visualize_matches.py waterfall --block yogurt   # or: weights | histogram | dashboard
+
+# Or run 05-07 as one bounded outer loop that re-blocks automatically if linking's
+# result looks like a blocking problem, not just an attribute problem (see below):
+uv run scripts/09_run_outer_loop.py --block yogurt
 ```
 
 Each agent-loop script logs every round to `data/artifacts/` for SME review:
@@ -36,6 +40,22 @@ writes every predicted FNDDS<->OFF pair (not just the JSON's top/bottom-10) to
 **`data/artifacts/matches_<block>_round<N>.csv`** — sorted by `match_probability`
 descending, with each matching attribute's value on both sides alongside it — open
 that directly in a spreadsheet to inspect the actual match results.
+
+## Outer loop: blocking<->linking feedback (`scripts/09_run_outer_loop.py`)
+
+`linking/agent_loop.py`'s inner loop only ever revises the *attribute* set — it never
+revises the *blocking* rule that determined which records were candidates in the first
+place. `outer_loop.py` closes that gap: it runs blocking → attributes → linking once,
+then `diagnose_blocking_problem` inspects the last linking round for two symptoms that
+specifically implicate the blocking rule rather than the attributes (attribute-shaped
+weaknesses are already the inner loop's job to fix): too few raw candidate pairs
+(`n_candidate_pairs` under `outer_loop.MIN_CANDIDATE_PAIRS`), or a `collapsed`
+degeneracy flag surviving every round of attribute revision. If either fires, the
+finding is fed back into another blocking round (as `prior_linking_findings`, via
+`run_blocking_agent`'s `linking_feedback` parameter) and the whole pipeline runs again —
+bounded by `AGENT_MAX_OUTER_ROUNDS` (default 2: "give re-blocking one chance," not an
+open-ended search). Each round is logged to
+`data/artifacts/outer_loop_<block>_round<N>.json`.
 
 ## Visualizing matches (`scripts/08_visualize_matches.py`)
 
@@ -192,79 +212,64 @@ a beans-and-rice mixed dish" the way it could reason "porc" means "pork".
 **Nothing else in the codebase.** `corpus_stats`, `field_stats`, and `candidate_terms`
 are assembled by `blocking/agent_loop.py`/`attributes/agent_loop.py` and handed to
 `ChatClient.complete_json` as plain prompt text (see `llm/prompts.py`) — the same
-payload reaches `llm/mock.py` and a real `llm/client.py`-backed model over
-`LLM_DEVICE=cpu`/`cuda`/`rocm`. Switching backends is the one-variable change described
-below; no prompt, agent-loop, correlation-check, or splink code needs to change. What
-*does* change is quality: a real LLM sees the same `candidate_terms` grounding but can
-go beyond literal substring frequency — proposing `with_rice` even though "rice" mined
-at a middling rank, recognizing "pork"/"beef"/"bacon" belong under `has_meat`, and
-recognizing cross-language synonyms ("porc", "riz") the mock's mining explicitly
-disclaims it can't do.
+payload reaches `llm/mock.py` and a real Ollama-backed `llm/client.py` model alike.
+Switching between them is the one-variable change described below; no prompt,
+agent-loop, correlation-check, or splink code needs to change. What *does* change is
+quality: a real LLM sees the same `candidate_terms` grounding but can go beyond literal
+substring frequency — proposing `with_rice` even though "rice" mined at a middling rank,
+recognizing "pork"/"beef"/"bacon" belong under `has_meat`, and recognizing
+cross-language synonyms ("porc", "riz") the mock's mining explicitly disclaims it can't
+do.
 
 ## LLM backend
 
-Every agent-loop script calls `get_llm_client()`, selected by `LLM_DEVICE`. Whichever
-backend, `uv run python -m agentic_matching.llm.server` starts (or attaches to) the
-server in the foreground — run it in its own terminal before `scripts/05-07`, which
-only ever *talk* to a server, never start one themselves.
+Every agent-loop script calls `get_llm_client()`, selected by `LLM_DEVICE`.
 
-- `LLM_DEVICE=cpu` (default): launches a local `vllm serve` subprocess. **`vllm` is not
-  a project dependency** — its CPU build isn't a normal PyPI wheel (the default `vllm`
-  wheel bundles CUDA and expects an NVIDIA GPU) and must be installed separately
-  following vLLM's CPU-backend instructions, which can be finicky to get working (build
-  from source, specific `VLLM_TARGET_DEVICE=cpu` flags, etc. — see vLLM's own docs). An
-  8B model's CPU inference is also slow and memory-heavy; on a resource-constrained box,
-  prefer `LLM_DEVICE=mock` for development and only switch to a real backend when you
-  actually need live LLM reasoning.
-- **`LLM_DEVICE=ollama`**: an easier path to a working CPU backend if vLLM's CPU build
-  gives you trouble — [Ollama](https://ollama.com/download) is a single installer, no
-  manual build step. `llm/server.py::OllamaServerManager` handles two things vLLM
-  doesn't need to: (1) Ollama is commonly already running as a persistent background
-  service (the official installer sets up a systemd service on Linux) — it detects an
-  already-reachable server and reuses it instead of erroring or double-launching, only
-  spawning its own `ollama serve` if nothing answers yet, and only stops a server it
-  started itself; (2) Ollama needs a model *pulled* before it can serve it (unlike
-  `vllm serve <model>`, which downloads on demand) — it runs `ollama pull <model>`
+- **`LLM_DEVICE=ollama` (default)**: talks to a local or remote
+  [Ollama](https://ollama.com/download) server (a single installer, no manual build
+  step) over its OpenAI-compatible `/v1` API. `uv run python -m agentic_matching.llm.server`
+  starts (or attaches to) it in the foreground — run it in its own terminal before
+  `scripts/05-09`, which only ever *talk* to a server, never start one themselves.
+  `llm/server.py::OllamaServerManager` handles two things worth knowing: (1) Ollama is
+  commonly already running as a persistent background service (the official installer
+  sets up a systemd service on Linux) — it detects an already-reachable server and
+  reuses it instead of erroring or double-launching, only spawning its own `ollama
+  serve` if nothing answers yet, and only stops a server it started itself; (2) Ollama
+  needs a model *pulled* before it can serve it, so `start()` runs `ollama pull <model>`
   automatically (a fast no-op if already present). Defaults to `LLM_MODEL=qwen2.5:1.5b`
-  and `LLM_PORT=11434` (Ollama's own conventions) unless you override them — see
-  `.env.example`'s comments on leaving these unset vs. pinned so the right default
-  applies. **Not exercised against a real Ollama install in this repo's own
-  testing** (Ollama isn't installed in this dev environment) — it requires a reasonably
-  recent Ollama version for its OpenAI-compatible `/v1` API (including `response_format`
-  JSON-mode support, which `llm/client.py` relies on); if something doesn't line up,
-  check your installed version's docs.
-- `LLM_DEVICE=cuda` / `rocm`: vLLM again, GPU launch flags — a one-variable switch, see
-  `src/agentic_matching/config.py`.
+  and `LLM_PORT=11434` (Ollama's own conventions) unless you override them in `.env`.
+  Requires a reasonably recent Ollama version for its OpenAI-compatible `/v1` API
+  (including `response_format` JSON-mode support, which `llm/client.py` relies on) --
+  verified against a real Ollama install over the course of this project's development.
 - `LLM_DEVICE=mock`: offline, no server required. `llm/mock.py` implements the same
   `ChatClient` interface with deterministic keyword-mining heuristics, enough to
-  exercise/test/demo the full pipeline end-to-end without any LLM installed. This is
-  what `scripts/05-07` were run with in this repo's checked-in `data/artifacts/`.
+  exercise/test/demo the full pipeline end-to-end without any LLM installed.
 - Set `LLM_BASE_URL` instead to point at an already-running OpenAI-compatible server
-  (e.g. on a remote GPU box, or a separately-managed Ollama/vLLM) rather than launching
-  one locally — works the same way for every `LLM_DEVICE` value.
+  (e.g. a remote host, or a separately-managed Ollama instance) rather than launching
+  one locally.
 
-## Known constraints on this dev box
+## Known constraints at this project's data scale
 
-This box has no usable GPU (4GB iGPU VRAM, not viable for an 8B model) and 27GB RAM.
 The pipeline pre-filters to per-block subsets (`data/blocks/<block>_{fndds,off}.parquet`,
 written once by `scripts/05_run_blocking_agent.py`) before splink ever runs, so splink
 never touches the full ~4.66M-row OFF table directly — but the blocks are still
 asymmetric (hundreds to low thousands of FNDDS records vs. tens of thousands of OFF
 records), and a few things below turned out to matter at that scale. All are fixed, but
-worth knowing if this pipeline is extended (larger blocks, a real LLM instead of the
-mock, more attributes, etc.):
+worth knowing if this pipeline is extended (larger blocks, more attributes, etc.), and
+worth double-checking on a memory-constrained machine in particular:
 
 - **EM blocking on a skewed attribute alone.** `linking/splink_model.py`'s EM passes
   deliberately combine any attribute column with the search-text prefix condition
   (`block_on(col, "substr(l.search_text, 1, 4)")`) rather than blocking on the attribute
   alone — blocking on a skewed boolean attribute by itself (e.g. `is_greek`, False for
   the vast majority of records) pairs up tens of millions of records and was what
-  originally froze this machine.
+  originally exhausted memory during development.
 - **Uncapped exhaustive holdout scoring.** `linking/evaluate.py`'s holdout scoring uses
   an exhaustive (`1=1`) blocking rule, safe only because the holdout sample size is
   capped (`max_holdout_positives`, default 500) — Branded Foods republishes many rows
   per GTIN, so an uncapped category holdout can be tens of thousands of rows, and an
-  exhaustive cross join at that scale is the other thing that froze this machine.
+  exhaustive cross join at that scale is the other thing that exhausted memory during
+  development.
 - **Nondeterministic keyword-mining samples.** `blocking/agent_loop.py::_sample_texts`
   now `ORDER BY fdc_id`/`code` explicitly. Without it, `LIMIT` alone left row order (and
   therefore which records get sampled for keyword mining, mock or real LLM) up to

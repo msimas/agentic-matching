@@ -1,15 +1,13 @@
-"""Central configuration: filesystem paths + device-agnostic LLM backend settings.
+"""Central configuration: filesystem paths + LLM backend settings.
 
-Everything that varies between "run on this CPU-only box" and "run on an NVIDIA/ROCm
-GPU box later" is controlled by environment variables here (see .env.example) so no
-other module needs to change when the hardware changes.
+LLM backend settings (model, host/port, timeouts, ...) are controlled by environment
+variables here (see .env.example) so no other module needs to change when they do.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -70,48 +68,23 @@ for d in (
 
 
 class LLMSettings(BaseSettings):
-    """Settings for the locally-hosted LLM server (vLLM or Ollama, both exposed as an
-    OpenAI-compatible endpoint -- see llm/client.py).
-
-    Switching hardware/backend later is a one-variable change:
-      - CPU via vLLM:      LLM_DEVICE=cpu     -- vLLM's CPU build must be installed
-        separately (see README); its build/install can be finicky.
-      - CPU via Ollama:    LLM_DEVICE=ollama  -- easier to get running on CPU (a single
-        installer, no manual build step); recommended if vLLM's CPU build gives trouble.
-      - NVIDIA GPU:        LLM_DEVICE=cuda LLM_DTYPE=bfloat16
-      - AMD ROCm GPU:      LLM_DEVICE=rocm LLM_DTYPE=float16
-    No application code changes are required for the switch; only server.py's
-    launch-flag construction and default port/model branch on `device`.
+    """Settings for the locally-hosted Ollama LLM server, exposed as an
+    OpenAI-compatible endpoint (see llm/client.py). `LLM_DEVICE=mock` selects the
+    offline stand-in instead (see llm/mock.py) -- no server settings below apply then.
     """
 
     model_config = SettingsConfigDict(env_prefix="LLM_", env_file=".env", extra="ignore")
 
-    device: str = "cpu"  # cpu | cuda | rocm | ollama
-    model: str = "NousResearch/Meta-Llama-3.1-8B-Instruct"
-    dtype: str = "bfloat16"
+    device: str = "ollama"  # ollama | mock
+    model: str = "qwen2.5:1.5b"
     base_url: str | None = None  # if set, connect to an already-running server instead
     host: str = "127.0.0.1"
-    port: int = 8001
+    port: int = 11434
     api_key: str = "not-needed"
-    max_model_len: int = 4096
-    gpu_memory_utilization: float = 0.85
-    tensor_parallel_size: int = 1
     request_timeout_s: float = 600.0
     max_tokens: int = 8192
     temperature: float = 0.33
     startup_timeout_s: float = 900.0  # self-hosted LLM server startup can take a while
-
-    @model_validator(mode="after")
-    def _apply_ollama_defaults(self) -> "LLMSettings":
-        # Ollama's own defaults differ from vLLM's (port 11434 vs 8001; model tags like
-        # "qwen2.5:1.5b" vs HF repo names) -- only apply them for fields the user hasn't
-        # explicitly set (via env var or otherwise), so LLM_PORT/LLM_MODEL always win.
-        if self.device == "ollama":
-            if "port" not in self.model_fields_set:
-                self.port = 11434
-            if "model" not in self.model_fields_set:
-                self.model = "qwen2.5:1.5b"
-        return self
 
     @property
     def effective_base_url(self) -> str:
@@ -128,6 +101,13 @@ class AgentLoopSettings(BaseSettings):
     max_rounds: int = 3
     # Stop early if the tracked metric changes by less than this between rounds.
     stabilization_delta: float = 0.01
+    # Bound for outer_loop.run_outer_loop's blocking<->linking feedback cycle -- each
+    # unit is a full blocking+attributes+linking cycle (many real-LLM calls, which can
+    # add up to a long wall-clock time depending on the LLM backend/hardware in use),
+    # so this is deliberately much smaller than max_rounds: 2 means "give re-blocking
+    # one chance to fix a problem attribute revision structurally can't," not an
+    # open-ended search.
+    max_outer_rounds: int = 2
 
 
 llm_settings = LLMSettings()

@@ -3,6 +3,13 @@ proposes a rule, it's scored against the calibration proxy (pair completeness,
 reduction ratio) and block-size diagnostics, and the LLM revises it — stopping early if
 metrics stabilize. Each round's rule + metrics is written to data/artifacts/ for SME
 review; the final round also materializes the FNDDS/OFF block subsets used downstream.
+
+`run_blocking_agent`'s optional `linking_feedback` parameter is how outer_loop.py closes
+the loop from a *later* stage back to this one: a finding from a previous full run
+through attribute-generation and linking (see outer_loop.diagnose_blocking_problem) that
+specifically implicated the blocking rule, not just the attributes, echoed to the LLM on
+every round the same way `notes` is. A plain call (no outer loop involved) leaves it
+None, unchanged from before.
 """
 
 from __future__ import annotations
@@ -216,7 +223,9 @@ def materialize_block(con: duckdb.DuckDBPyConnection, block_name: str, rule: dic
     return {"n_fndds": n_fndds, "n_off": n_off}
 
 
-def run_blocking_agent(block_name: str, client: ChatClient | None = None) -> list[BlockingRound]:
+def run_blocking_agent(
+    block_name: str, client: ChatClient | None = None, linking_feedback: str | None = None
+) -> list[BlockingRound]:
     client = client or get_llm_client()
     profiling.build(force=False)  # no-op if already built (see scripts/03_build_fdc_db.py)
     con = duckdb.connect(str(FDC_DUCKDB_PATH))
@@ -280,6 +289,7 @@ def run_blocking_agent(block_name: str, client: ChatClient | None = None) -> lis
             corpus_stats=corpus_stats,
             category_options=category_options,
             notes=notes,
+            linking_feedback=linking_feedback,
         )
         try:
             response = client.complete_json(sys_p, user_p)
