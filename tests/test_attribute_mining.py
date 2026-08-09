@@ -1,6 +1,6 @@
 import pandas as pd
 
-from agentic_matching.attributes.generator import _candidate_boolean_terms
+from agentic_matching.attributes.agent_loop import _candidate_boolean_terms
 
 # Synthetic block: 10 FNDDS rows, 10 OFF rows. "meat" appears in a meaningful minority
 # on both sides; "beans" (the block's own canonical term) appears in nearly all rows on

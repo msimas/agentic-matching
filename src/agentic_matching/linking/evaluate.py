@@ -24,7 +24,7 @@ import duckdb
 import pandas as pd
 from splink import DuckDBAPI, Linker
 
-from agentic_matching.attributes.library import compute_attribute_values
+from agentic_matching.attributes.rules import compute_attribute_values
 from agentic_matching.blocking.metrics import combined_exclude_keywords, exclude_predicate_sql, term_predicate_sql
 from agentic_matching.blocking.seed_rules import get_seed_rule
 from agentic_matching.config import CALIBRATION_DIR

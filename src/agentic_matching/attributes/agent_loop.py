@@ -1,14 +1,14 @@
-"""Bounded (N=3 by default) agentic loop for matching-attribute construction: the LLM
-proposes an attribute set (seeded from library.SEED_ATTRIBUTES when available, e.g.
-yogurt; from scratch otherwise, e.g. beans), it's checked for pairwise correlation on
-the block's own population, and the LLM revises based on the correlation flags —
-stopping early once no attribute pair is flagged (or the set stops changing). Each
-round is logged to data/artifacts/ for SME review, and the final attribute set is
-persisted as a versioned JSON artifact under attributes/generated/<block>/ — this is
-the "versioned, testable artifact" the extraction logic is defined by (attributes are
-keyword-rule based, computed uniformly by attributes/library.py's apply_attribute, so a
-declarative versioned JSON plays the role generated Python code would for a richer
-rule language).
+"""Bounded (N=3 by default) agentic loop for matching-attribute construction -- the
+attribute-stage counterpart to blocking/agent_loop.py. The LLM proposes an attribute
+set (seeded from seed_rules.SEED_ATTRIBUTES when available, e.g. yogurt; from scratch
+otherwise, e.g. beans), it's checked for pairwise correlation on the block's own
+population, and the LLM revises based on the correlation flags — stopping early once no
+attribute pair is flagged (or the set stops changing). Each round is logged to
+data/artifacts/ for SME review, and the final attribute set is persisted as a versioned
+JSON artifact under attributes/generated/<block>/ — this is the "versioned, testable
+artifact" the extraction logic is defined by (attributes are keyword-rule based,
+computed uniformly by attributes/rules.py's apply_attribute, so a declarative versioned
+JSON plays the role generated Python code would for a richer rule language).
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ from typing import Any
 
 import pandas as pd
 
-from agentic_matching.attributes.correlation_check import check_correlations
-from agentic_matching.attributes.library import compute_attribute_values, get_seed_attribute_notes, get_seed_attributes
+from agentic_matching.attributes.metrics import check_correlations
+from agentic_matching.attributes.rules import compute_attribute_values
+from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
 from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings
 from agentic_matching.llm.client import ChatClient, get_llm_client

@@ -24,7 +24,7 @@ from typing import Any, Literal
 import pandas as pd
 from splink import Linker
 
-from agentic_matching.attributes.generator import load_latest_attributes
+from agentic_matching.attributes.agent_loop import load_latest_attributes
 from agentic_matching.config import ARTIFACTS_DIR
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings

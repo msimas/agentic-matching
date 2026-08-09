@@ -215,7 +215,7 @@ def build_attribute_prompt(
         "sample_candidate_pairs": sample_pairs[:30],
     }
     if guidance:
-        # Freeform domain guidance from attributes/library.py's SEED_ATTRIBUTE_NOTES --
+        # Freeform domain guidance from attributes/seed_rules.py's SEED_ATTRIBUTE_NOTES --
         # echoed every round (not just round 0), same rationale as build_blocking_
         # prompt's "notes" parameter: persistent context about the block, not state the
         # LLM's revision is expected to iterate away.

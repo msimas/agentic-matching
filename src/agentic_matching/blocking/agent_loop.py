@@ -251,13 +251,21 @@ def run_blocking_agent(block_name: str, client: ChatClient | None = None) -> lis
 
     rounds: list[BlockingRound] = []
     # None for most blocks (fully LLM-proposed, as originally designed); a hand-curated
-    # starting point for a block with an entry in seed_rules.py (e.g. exclude_keywords
-    # already known to be needed) -- see that module's docstring. Only "fndds"/"off"
+    # starting point for a block with an entry in seed_rules.json (e.g. exclude_keywords
+    # already known to be needed) -- see seed_rules.py's docstring. Only "fndds"/"off"
     # seed round 0 -- "notes" (below) is echoed every round instead, since it's
-    # persistent domain guidance, not rule state the LLM revises round over round.
+    # persistent domain guidance, not rule state the LLM revises round over round. Only
+    # the recognized rule keys are kept -- seed_rules.json may also carry a documentation
+    # -only "exclude_keywords_rationale" per side that shouldn't be echoed into the
+    # prompt as if it were part of the rule schema.
     seed_rule = get_seed_rule(block_name)
     prev_rule: dict[str, Any] | None = (
-        {"fndds": seed_rule["fndds"], "off": seed_rule["off"]} if seed_rule else None
+        {
+            side: {k: seed_rule[side][k] for k in ("keywords", "categories", "exclude_keywords") if k in seed_rule[side]}
+            for side in ("fndds", "off")
+        }
+        if seed_rule
+        else None
     )
     notes = get_seed_notes(block_name)
     prev_metrics: dict[str, Any] | None = None

@@ -1,8 +1,5 @@
-from agentic_matching.attributes.library import (
-    SEED_ATTRIBUTES,
-    apply_attribute,
-    compute_attribute_values,
-)
+from agentic_matching.attributes.rules import apply_attribute, compute_attribute_values
+from agentic_matching.attributes.seed_rules import SEED_ATTRIBUTES
 
 IS_GREEK = next(a for a in SEED_ATTRIBUTES["yogurt"] if a["name"] == "is_greek")
 FAT_LEVEL = next(a for a in SEED_ATTRIBUTES["yogurt"] if a["name"] == "fat_level")

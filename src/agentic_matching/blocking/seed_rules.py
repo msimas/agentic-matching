@@ -1,5 +1,5 @@
 """Optional hand-authored starting point for a block's blocking rule -- the blocking-
-stage counterpart to attributes/library.py's SEED_ATTRIBUTES (yogurt's fixed
+stage counterpart to attributes/seed_rules.py's SEED_ATTRIBUTES (yogurt's fixed
 vision-specified attribute set). Where SEED_ATTRIBUTES is a *complete, immutable*
 attribute set for yogurt, a seed rule here is just a *starting point* for round 0: the
 agent loop (mock or real LLM) is free to -- and expected to -- refine it using the
@@ -11,8 +11,10 @@ SME already knows "breaded" as a keyword will pull in seafood/cheese products al
 vegetables, before ever running the loop and seeing that in a materialized block) --
 this is a place to encode that up front rather than rediscovering it every run.
 
-Unlike attributes/library.py's SEED_ATTRIBUTES, this dict starts empty by default for
-every block (yogurt and beans both propose blocking rules fully from scratch, as
+The actual seed data lives in seed_rules.json, not here, so it can be edited by a
+domain expert without touching Python -- this module is just the loader plus the two
+accessor functions the rest of the codebase calls. A block absent from the JSON has no
+seed (yogurt and beans both originally proposed blocking rules fully from scratch, as
 described in PLAN.md) -- add an entry only when you have real domain knowledge worth
 seeding.
 
@@ -23,64 +25,22 @@ both be 'a fried vegetable'". Unlike "fndds"/"off", which only seed round 0 (the
 own revised rule replaces them from round 1 on -- see run_blocking_agent), "notes" is
 echoed to the LLM on *every* round via build_blocking_prompt, since it's persistent
 guidance about the block's domain, not part of the rule state being iterated on.
+
+A side's rule dict may also carry an "exclude_keywords_rationale" key: a freeform note
+explaining *why* those specific exclude_keywords were chosen (e.g. verified
+false-positive/false-negative counts from a real materialized block) -- purely
+documentation for whoever edits the JSON next, never read by any agent loop or prompt.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-SEED_BLOCKING_RULES: dict[str, dict[str, Any]] = {
-    "yogurt": {
-        # Round 1's LLM-proposed keywords/categories (data/artifacts/
-        # blocking_yogurt_round1.json), carried forward as-is -- this seed only adds
-        # the exclude_keywords below, it isn't a change to what counts as in-block.
-        "fndds": {
-            "keywords": ["yogurt"],
-            "categories": ["Yogurt, regular", "Yogurt, Greek"],
-            # Frozen yogurt / yogurt-on-a-cone products are functionally ice cream (a
-            # frozen, scooped/soft-serve dessert), not the refrigerated cultured-dairy
-            # product this block is about -- "frozen" and "cone" both catch that
-            # without needing to touch the "yogurt" keyword/category match itself.
-            # Verified against the current OFF-side yogurt block: "frozen" excludes
-            # 1,271 real frozen-yogurt records; "cone" excludes only 12 more (mostly
-            # already caught by "frozen" too, e.g. "...frozen yogurt cones"), a couple
-            # of which are false positives from an unrelated substring ("Falcone" the
-            # surname, "scones") rather than an actual cone product -- kept anyway per
-            # explicit instruction, since the false-positive count is negligible (2 of
-            # ~63K OFF block records) next to the real frozen-dessert exclusions.
-            "exclude_keywords": ["frozen", "cone"],
-        },
-        "off": {
-            "keywords": ["yogurt", "greek"],
-            "categories": ["en:fermented-dairy-desserts", "en:yogurts"],
-            "exclude_keywords": ["frozen", "cone"],
-        },
-    },
-    "breaded_vegetables": {
-        "fndds": {
-            "keywords": ["fried vegetable", "breaded vegetable"],
-            "categories": ["Fried vegetables"],
-            "exclude_keywords": ["fry", "fries", "french fries", "fish", "shrimp", "prawn", "tilapia", "haddock", "flounder", "cod", "cheese", "chicken"],
-        },
-        "off": {
-            "keywords": ["breaded", "onion ring", "pakora", "tempura"],
-            "categories": ["en:breaded-onion-rings", "en:pakora"],
-            # "breaded" alone pulls in breaded seafood/cheese products too (shrimp,
-            # tilapia, haddock, flounder, mozzarella sticks, fish sticks) -- verified
-            # against a real materialized block (LLM_DEVICE=ollama): 6,753 OFF records,
-            # a meaningful share of them breaded fish/shrimp/cheese, not vegetables.
-            "exclude_keywords": ["fish", "shrimp", "prawn", "tilapia", "haddock", "flounder", "cod", "cheese", "chicken", "fry", "fries", "french fries"],
-        },
-        "notes": (
-            "This block covers several distinct vegetables prepared fried/breaded "
-            "(onion, mushroom, cauliflower, eggplant, squash, green tomato, green bean, "
-            "broccoli, pickle, sweet potato, ...), not one single dish -- a record is "
-            "in-block if it's ANY of these, so don't narrow the keyword/category lists "
-            "down to only the vegetable(s) that happen to dominate the samples you're "
-            "shown."
-        ),
-    },
-}
+_SEED_RULES_PATH = Path(__file__).resolve().parent / "seed_rules.json"
+
+SEED_BLOCKING_RULES: dict[str, dict[str, Any]] = json.loads(_SEED_RULES_PATH.read_text())
 
 
 def get_seed_rule(block_name: str) -> dict[str, Any] | None:

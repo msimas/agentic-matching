@@ -8,7 +8,7 @@ import logging
 
 import typer
 
-from agentic_matching.attributes.generator import run_attribute_agent
+from agentic_matching.attributes.agent_loop import run_attribute_agent
 from agentic_matching.config import BLOCKS
 
 app = typer.Typer(add_completion=False)

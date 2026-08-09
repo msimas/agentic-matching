@@ -16,7 +16,7 @@ import pandas as pd
 import splink.comparison_library as cl
 from splink import DuckDBAPI, Linker, SettingsCreator, block_on
 
-from agentic_matching.attributes.library import compute_attribute_values
+from agentic_matching.attributes.rules import compute_attribute_values
 from agentic_matching.config import BLOCKS_DIR
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def _drop_unobservable_attrs(
 ) -> tuple[list[dict[str, Any]], dict[str, list[Any]], dict[str, list[Any]]]:
     """Drop any attribute whose computed value is None for *every* record on one side.
 
-    Only a categorical attribute can produce this (library.apply_attribute always
+    Only a categorical attribute can produce this (rules.apply_attribute always
     resolves a boolean attribute to True/False, never None) -- it happens when the LLM
     (or a hand-authored seed) gives every category real off_keywords but leaves every
     category's fndds_keywords empty (or vice versa), e.g. verified against this

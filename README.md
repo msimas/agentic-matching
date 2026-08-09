@@ -92,7 +92,7 @@ guesswork:
   it's only ~5.4K rows total, so even a broad FNDDS keyword isn't a memory risk, and
   applying the same bar there only throws away good keywords (e.g. "cooked", "canned")
   for no safety benefit.
-- **Matching attributes** (`attributes/generator.py`): each round's prompt includes
+- **Matching attributes** (`attributes/agent_loop.py`): each round's prompt includes
   `field_stats` — the most common real values of each side's categorical fields
   (OFF `categories_tags`/`brands`, FNDDS's WWEIA category) *within this block's
   population*, so a proposed categorical attribute (e.g. `bean_type`'s categories) can
@@ -152,10 +152,10 @@ materialized block, not by the automatic metric — exactly the kind of thing th
 
 ## Mining candidate matching attributes from the block itself
 
-For a from-scratch block (no `library.SEED_ATTRIBUTES` entry, e.g. `beans`), the
+For a from-scratch block (no `seed_rules.SEED_ATTRIBUTES` entry, e.g. `beans`), the
 initial round previously proposed attributes purely from world knowledge (or, for the
 mock, a hand-curated list) — no mechanism actually *selected* them from the data.
-`attributes/generator.py::_candidate_boolean_terms` mines the block's own free text
+`attributes/agent_loop.py::_candidate_boolean_terms` mines the block's own free text
 (FNDDS `description`, OFF `search_text`) for tokens that split its population into a
 meaningful minority/majority **on at least one side** (a `min_frac`-`max_frac` band —
 near-0% or near-100% doesn't discriminate anything), ranked by the *minimum* of the two
@@ -172,7 +172,7 @@ because grouping domain synonyms like "garbanzo"/"chickpea"/"pois chiche" into o
 category is exactly the kind of reasoning frequency-counting can't do) with boolean
 attributes built directly from the top mined `candidate_terms` (e.g. `has_meat`,
 `has_canned`). Redundant mined attributes still get caught by the existing
-`correlation_check.py` step in a later round exactly as if the LLM had proposed them
+`metrics.py` step in a later round exactly as if the LLM had proposed them
 (verified: mining once surfaced `has_black`, which is redundant with `bean_type`'s
 "black" category — flagged at Cramér's V 0.972 and dropped in round 1, unprompted).
 
@@ -190,7 +190,7 @@ a beans-and-rice mixed dish" the way it could reason "porc" means "pork".
 ### What changes with a real LLM instead of the mock?
 
 **Nothing else in the codebase.** `corpus_stats`, `field_stats`, and `candidate_terms`
-are assembled by `blocking/agent_loop.py`/`attributes/generator.py` and handed to
+are assembled by `blocking/agent_loop.py`/`attributes/agent_loop.py` and handed to
 `ChatClient.complete_json` as plain prompt text (see `llm/prompts.py`) — the same
 payload reaches `llm/mock.py` and a real `llm/client.py`-backed model over
 `LLM_DEVICE=cpu`/`cuda`/`rocm`. Switching backends is the one-variable change described

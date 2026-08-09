@@ -14,9 +14,9 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from agentic_matching.attributes.correlation_check import check_correlations
-from agentic_matching.attributes.generator import _pooled_values, load_latest_attributes
-from agentic_matching.attributes.library import get_seed_attribute_notes
+from agentic_matching.attributes.agent_loop import _pooled_values, load_latest_attributes
+from agentic_matching.attributes.metrics import check_correlations
+from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings

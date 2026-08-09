@@ -19,7 +19,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from agentic_matching.attributes.library import SEED_ATTRIBUTES as _LIBRARY_SEED_ATTRIBUTES
+from agentic_matching.attributes.seed_rules import SEED_ATTRIBUTES as _LIBRARY_SEED_ATTRIBUTES
 from agentic_matching.blocking.rules import NEVER_USEFUL_KEYWORDS as _STOPWORDS
 from agentic_matching.llm.client import ChatClient
 
@@ -135,7 +135,7 @@ _MAX_MINED_ATTRIBUTES = 6
 
 def _mined_boolean_attributes(candidate_terms: list[dict[str, Any]], k: int = _MAX_MINED_ATTRIBUTES) -> list[dict[str, Any]]:
     """Turn the top `k` mined candidate terms (see
-    attributes/generator.py::_candidate_boolean_terms) into boolean attribute
+    attributes/agent_loop.py::_candidate_boolean_terms) into boolean attribute
     definitions -- the literal token, applied identically on both sides, since this
     mock has no way to recognize a cross-language synonym for it (see that function's
     docstring)."""
