@@ -20,7 +20,12 @@ from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings
-from agentic_matching.linking.evaluate import export_predictions_csv, plausibility_report, score_against_holdout
+from agentic_matching.linking.evaluate import (
+    attribute_discriminative_power,
+    export_predictions_csv,
+    plausibility_report,
+    score_against_holdout,
+)
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_attribute_prompt
 
@@ -33,6 +38,7 @@ class LinkingRound:
     attributes: list[dict[str, Any]]
     degeneracy_flags: list[dict[str, Any]]
     holdout_evaluation: dict[str, Any]
+    attribute_discriminative_power: list[dict[str, Any]]
     plausibility: dict[str, Any]
     rationale: str
     matches_csv: str
@@ -67,6 +73,11 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         predictions = splink_model.predict(linker, threshold=0.5)
         plausibility = plausibility_report(predictions)
         holdout_eval = score_against_holdout(block_name, attrs, trained_settings)
+        # Pure value-agreement comparison against the same calibration holdout, not a
+        # model prediction -- cheap enough to compute every round regardless of block
+        # size (see its docstring for why this is a different, complementary signal to
+        # both holdout_eval's aggregate f1 and correlation_flags below).
+        discriminative_power = attribute_discriminative_power(block_name, attrs)
 
         # Exported separately from `predictions` (not gated on the 0.5 "confident
         # match" threshold above): the CSV is a review artifact, not a decision, so it
@@ -94,6 +105,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 attributes=attrs,
                 degeneracy_flags=degeneracy_flags,
                 holdout_evaluation=holdout_eval,
+                attribute_discriminative_power=discriminative_power,
                 plausibility=plausibility,
                 rationale=rationale,
                 matches_csv=str(matches_csv_path),
@@ -127,7 +139,11 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             sample_pairs=[],
             existing_attributes=attrs,
             correlation_flags=correlation_flags or None,
-            evaluation={**holdout_eval, "degeneracy_flags": degeneracy_flags},
+            evaluation={
+                **holdout_eval,
+                "degeneracy_flags": degeneracy_flags,
+                "attribute_discriminative_power": discriminative_power,
+            },
             guidance=get_seed_attribute_notes(block_name),
         )
         try:

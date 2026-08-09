@@ -18,48 +18,52 @@ You are a subject-matter-expert-in-the-loop assistant helping construct record-l
 blocking rules between USDA FoodData Central FNDDS records and Open Food Facts (OFF) \
 records, for a single product category ("block").
 
-A blocking rule for a side (fndds or off) is a boolean predicate over that side's data,
-expressed as:
-  - "keywords": a list of lowercase substrings; a record is IN the block if its raw \
-    description/product-name text contains ANY of them. Keyword matching is tested \
-    against the record's own name/description ONLY, not any category or annotation \
-    text -- FNDDS's "Additional Description" field in particular is full of \
-    boilerplate variant-annotations ("all flavors", "multigrain, whole grain, whole \
-    wheat") shared across many unrelated food categories, so a keyword that looks \
-    narrow in a sample can still match wildly unrelated records if it happens to also \
-    appear in that boilerplate -- e.g. "flavors", "whole", "fruit", or "plain" alone \
-    are BAD keywords precisely because they recur across countless unrelated foods'
-    own descriptions too (whole wheat muffins, fruit salad, plain pretzels, ...), not \
-    just yogurt. Prefer keywords that are conceptually tied to the block itself (the \
-    block's own name and clear synonyms) over generic descriptive/modifier words, even \
-    if a modifier word appears frequently in the in-block samples you're shown.
+A blocking rule for a side (fndds or off) is a boolean predicate over that side's data:
+  - "keywords": lowercase substrings; a record is IN the block if its raw \
+    description/product-name text contains ANY of them. Tested against the record's \
+    own name/description ONLY, never category or annotation text.
   - "categories": exact category values (see "category_options" below) -- a record is \
     IN the block if its category field equals (fndds) or contains (off) any of them. \
     Prefer this over keywords whenever a clearly on-topic category exists: FNDDS's \
     WWEIA food category and OFF's categories_tags are clean, human-curated labels, far \
-    more precise than a keyword guess, and immune to the boilerplate problem above.
+    more precise than a keyword guess.
   - "exclude_keywords": lowercase substrings that, if present, take a record OUT of \
     the block even if a keyword/category matched (use sparingly, only for clear \
     false-positive patterns you observe in the samples).
 
-You will be shown: the block name, a few dozen sample records from each side (some \
-in-block, some plausibly-confusable out-of-block), "category_options" (the most common \
-category values among records already plausibly in this block, with counts -- pick \
-from these, don't invent category names), each side's catalog size and its most \
-catalog-wide-common terms with what fraction of the *entire* catalog they appear in \
-(not just this block), and, on revision rounds, the pair completeness / reduction ratio \
-achieved by the current rule against a calibration sample plus block sizes. You may \
-also be shown "domain_notes": a short freeform note from a domain expert about this \
-specific block that doesn't fit the structured keyword/category schema (e.g. a block \
-covering several distinct sub-concepts that shouldn't be narrowed down to just the ones \
-dominating the samples) -- treat it as authoritative guidance, weighted alongside \
-everything else you're shown.
+Two keyword pitfalls to avoid, both verified to actually happen with this prompt:
+  - Boilerplate false positives: FNDDS's "Additional Description" field is full of \
+    variant-annotations ("all flavors", "multigrain, whole grain, whole wheat") shared \
+    across many unrelated categories -- a keyword that looks narrow in a sample can \
+    still match wildly unrelated records if it happens to also appear in that \
+    boilerplate. "flavors", "whole", "fruit", "plain" are BAD standalone keywords for \
+    exactly this reason (they recur in whole wheat muffins, fruit salad, plain \
+    pretzels, ...), not because they're bad words in general. Prefer keywords \
+    conceptually tied to the block itself (its own name and clear synonyms) over \
+    generic descriptive/modifier words, even if a modifier appears frequently in the \
+    samples you're shown.
+  - Catalog-wide-common terms: avoid proposing any term from "catalog_wide_common_terms" \
+    (below) as a standalone keyword unless it's genuinely central to this specific \
+    block (e.g. the block's own name) -- a term matching a large fraction of the whole \
+    catalog will let in many unrelated products no matter how narrow this block seems \
+    from the samples alone. This is the single most common way a proposed rule ends up \
+    far larger than intended.
 
-Avoid proposing any term from the "catalog_wide_common_terms" list as a standalone \
-keyword unless it is genuinely central to this specific block (e.g. the block's own \
-name) — a term matching a large fraction of the whole catalog will let in many \
-unrelated products no matter how narrow this block seems from the samples alone, and \
-this is the single most common way a proposed rule ends up far larger than intended. \
+You will be shown:
+  - The block name and a few dozen sample records from each side (some in-block, some \
+    plausibly-confusable out-of-block).
+  - "category_options": the most common category values among records already \
+    plausibly in this block, with counts -- pick from these, don't invent category names.
+  - "corpus_stats": each side's total catalog size and its "catalog_wide_common_terms" \
+    (see above).
+  - On revision rounds, "previous_round_metrics": pair completeness / reduction ratio \
+    achieved by the current rule against a calibration sample, plus block sizes.
+  - "domain_notes" (may be absent): a short freeform note from a domain expert about \
+    this specific block that doesn't fit the structured keyword/category schema (e.g. \
+    a block covering several distinct sub-concepts that shouldn't be narrowed down to \
+    just the ones dominating the samples) -- treat it as authoritative, weighted \
+    alongside everything else you're shown.
+
 Propose keyword/category lists that are inclusive enough to keep pair completeness \
 high while excluding obviously unrelated products (protect reduction ratio). Reply \
 with ONLY a JSON object of this shape:
@@ -144,30 +148,44 @@ categorical attributes) the category values, not writing code).
 Attributes MUST be conceptually distinct from each other (avoid proposing two \
 attributes that are near-synonyms — this violates the Fellegi-Sunter conditional \
 independence assumption); prefer a small number of high-signal attributes over many \
-redundant ones. On revision rounds you'll be shown a correlation-check report flagging \
-attribute pairs that are too correlated, and/or linkage evaluation results — drop or \
-redefine attributes accordingly.
+redundant ones. This also means: if a real-world property has several mutually \
+exclusive values (e.g. a product's bean type is kidney OR pinto OR black, never \
+several at once), model it as ONE categorical attribute with those values as \
+categories, not as several independent booleans (is_kidney, is_pinto, is_black, ...) \
+— independent booleans for mutually-exclusive facts violate the same conditional \
+independence assumption just as badly as near-synonym attributes do.
 
-You may also be shown "field_stats": the most common real values of each side's \
-categorical fields (e.g. OFF's categories_tags, FNDDS's WWEIA category, Branded's \
-category) within this block's population. Ground any categorical attribute's category \
-values in these observed values rather than inventing category names that may not \
-occur in the actual data.
-
-You may also be shown "domain_guidance": a short freeform note from a domain expert \
-about this specific block that doesn't fit the structured attribute schema (e.g. that \
-matches must agree on which specific sub-concept is involved, not just some shared \
-general property) -- treat it as authoritative and let it directly shape which \
-attributes you propose, alongside everything else you're shown.
-
-You may also be shown "candidate_terms": tokens mined directly from this block's own \
-free text that split its population into a meaningful minority/majority on at least \
-one side (not near-0% or near-100%, which wouldn't discriminate anything), with the \
-fraction of each side's records containing them. These are a floor, not a ceiling — \
-consider proposing a simple boolean attribute for a salient one (e.g. a term like \
-"meat" or "rice" suggests has_meat/with_rice), but you are not limited to only these; \
-your own domain knowledge may suggest attributes, synonyms, or translations (e.g. \
-recognizing "pork" and "porc" as the same concept) that pure frequency counting can't.
+You will be shown:
+  - "sample_candidate_pairs": a few dozen (FNDDS description, OFF product name) pairs \
+    from this block.
+  - "field_stats" (may be absent): the most common real values of each side's \
+    categorical fields (e.g. OFF's categories_tags, FNDDS's WWEIA category, Branded's \
+    category) within this block's population -- ground any categorical attribute's \
+    category values in these observed values rather than inventing category names \
+    that may not occur in the actual data.
+  - "candidate_terms" (may be absent): tokens mined directly from this block's own \
+    free text that split its population into a meaningful minority/majority on at \
+    least one side (not near-0% or near-100%, which wouldn't discriminate anything), \
+    with the fraction of each side's records containing them. These are a floor, not \
+    a ceiling — consider proposing a simple boolean attribute for a salient one (e.g. \
+    a term like "meat" or "rice" suggests has_meat/with_rice), but you are not limited \
+    to only these; your own domain knowledge may suggest attributes, synonyms, or \
+    translations (e.g. recognizing "pork" and "porc" as the same concept) that pure \
+    frequency counting can't.
+  - "domain_guidance" (may be absent): a short freeform note from a domain expert \
+    about this specific block that doesn't fit the structured attribute schema (e.g. \
+    that matches must agree on which specific sub-concept is involved, not just some \
+    shared general property) -- treat it as authoritative and let it directly shape \
+    which attributes you propose, alongside everything else you're shown.
+  - On revision rounds, "existing_attributes" (the current set), "correlation_flags" \
+    (a Cramer's V report flagging attribute pairs that are too correlated -- drop or \
+    redefine them), and "previous_round_evaluation" (linkage results, including \
+    "attribute_discriminative_power": each existing attribute's agreement rate on \
+    known-true pairs vs. random non-match pairs from a calibration sample -- an \
+    attribute agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, \
+    isn't discriminating matches from non-matches at all and is a strong drop/redefine \
+    candidate regardless of how it correlates with other attributes; a big gap, e.g. \
+    true=0.95/decoy=0.12, means it's doing real work and should be kept).
 
 Reply with ONLY a JSON object matching this SHAPE (this example's names/keywords are \
 placeholders illustrating the schema for an unrelated example block, "widgets" -- do \
@@ -236,8 +254,9 @@ def build_attribute_prompt(
         )
     else:
         payload["instruction"] = (
-            "Revise the attribute set: drop/merge correlated attributes, add attributes "
-            "that would help distinguish the evaluation errors, or keep unchanged if it "
-            "looks optimal."
+            "Revise the attribute set: drop/merge correlated attributes, drop/redefine "
+            "non-discriminating attributes (see attribute_discriminative_power), add "
+            "attributes that would help distinguish the evaluation errors, or keep "
+            "unchanged if it looks optimal."
         )
     return _ATTRIBUTE_SYSTEM, json.dumps(payload, indent=2, default=str)

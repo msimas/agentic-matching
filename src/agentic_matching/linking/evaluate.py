@@ -17,6 +17,7 @@ produced:
 from __future__ import annotations
 
 import logging
+import random
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +169,79 @@ def score_against_holdout(
         "recall": recall,
         "f1": f1,
     }
+
+
+def _attribute_discriminative_power(
+    fndds_df: pd.DataFrame,
+    off_df: pd.DataFrame,
+    true_labels: dict[str, str],
+    attrs: list[dict[str, Any]],
+    n_decoys_per_positive: int = 5,
+    seed: int = 13,
+) -> list[dict[str, Any]]:
+    """Pure value-comparison logic behind `attribute_discriminative_power`, split out
+    so it's testable against small synthetic frames without needing the real
+    calibration parquet (same rationale as profiling._rank_terms's split from
+    high_frequency_terms)."""
+    if fndds_df.empty or off_df.empty or not true_labels:
+        return []
+
+    fndds_by_id = fndds_df.set_index("unique_id")
+    off_by_id = off_df.set_index("unique_id")
+    off_ids = list(off_by_id.index)
+    rng = random.Random(seed)
+
+    results = []
+    for attr in attrs:
+        name = attr["name"]
+        if name not in fndds_by_id.columns or name not in off_by_id.columns:
+            continue
+        true_agree = []
+        decoy_agree = []
+        for fndds_id, true_off_id in true_labels.items():
+            if fndds_id not in fndds_by_id.index or true_off_id not in off_by_id.index:
+                continue
+            l_val = fndds_by_id.loc[fndds_id, name]
+            true_agree.append(l_val == off_by_id.loc[true_off_id, name])
+            decoy_ids = [oid for oid in rng.sample(off_ids, min(n_decoys_per_positive, len(off_ids))) if oid != true_off_id]
+            decoy_agree.extend(l_val == off_by_id.loc[oid, name] for oid in decoy_ids)
+        if not true_agree or not decoy_agree:
+            continue
+        results.append(
+            {
+                "attribute": name,
+                "agreement_rate_true_pairs": round(sum(true_agree) / len(true_agree), 3),
+                "agreement_rate_decoy_pairs": round(sum(decoy_agree) / len(decoy_agree), 3),
+                "n_true_pairs": len(true_agree),
+                "n_decoy_pairs": len(decoy_agree),
+            }
+        )
+    return results
+
+
+def attribute_discriminative_power(
+    block_name: str, attrs: list[dict[str, Any]], n_decoys_per_positive: int = 5, seed: int = 13
+) -> list[dict[str, Any]]:
+    """For each attribute, compare its agreement rate on known-true (Branded<->OFF
+    calibration) pairs against its agreement rate on random non-match (decoy) pairs from
+    the same holdout sample -- a query-derived signal (run once per revision round, fed
+    back into build_attribute_prompt's `evaluation`) showing the attribute-generation
+    LLM which of its OWN proposed attributes actually discriminate matches from
+    non-matches, complementing correlation_check's attribute-vs-attribute check (which
+    only catches redundancy between attributes, not whether any of them are useful at
+    all) and the aggregate holdout f1 (which conflates every attribute's contribution
+    into one number). An attribute agreeing at roughly the same rate on true pairs and
+    decoys (e.g. "is_frozen: 0.90 true vs 0.88 decoy") isn't pulling any weight -- most
+    records agree on it regardless of whether they're a real match; a big gap (e.g.
+    "vegetable_type: 0.95 true vs 0.12 decoy") means it is.
+
+    Pure value comparison against attribute columns splink_model already computes for
+    build_eval_frames' output -- no model training/prediction involved, so this is cheap
+    to run every round regardless of block size."""
+    fndds_df, off_df, true_labels = build_eval_frames(block_name, attrs)
+    return _attribute_discriminative_power(
+        fndds_df, off_df, true_labels, attrs, n_decoys_per_positive=n_decoys_per_positive, seed=seed
+    )
 
 
 def export_predictions_csv(
