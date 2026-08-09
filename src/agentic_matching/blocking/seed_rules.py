@@ -30,6 +30,32 @@ from __future__ import annotations
 from typing import Any
 
 SEED_BLOCKING_RULES: dict[str, dict[str, Any]] = {
+    "yogurt": {
+        # Round 1's LLM-proposed keywords/categories (data/artifacts/
+        # blocking_yogurt_round1.json), carried forward as-is -- this seed only adds
+        # the exclude_keywords below, it isn't a change to what counts as in-block.
+        "fndds": {
+            "keywords": ["yogurt"],
+            "categories": ["Yogurt, regular", "Yogurt, Greek"],
+            # Frozen yogurt / yogurt-on-a-cone products are functionally ice cream (a
+            # frozen, scooped/soft-serve dessert), not the refrigerated cultured-dairy
+            # product this block is about -- "frozen" and "cone" both catch that
+            # without needing to touch the "yogurt" keyword/category match itself.
+            # Verified against the current OFF-side yogurt block: "frozen" excludes
+            # 1,271 real frozen-yogurt records; "cone" excludes only 12 more (mostly
+            # already caught by "frozen" too, e.g. "...frozen yogurt cones"), a couple
+            # of which are false positives from an unrelated substring ("Falcone" the
+            # surname, "scones") rather than an actual cone product -- kept anyway per
+            # explicit instruction, since the false-positive count is negligible (2 of
+            # ~63K OFF block records) next to the real frozen-dessert exclusions.
+            "exclude_keywords": ["frozen", "cone"],
+        },
+        "off": {
+            "keywords": ["yogurt", "greek"],
+            "categories": ["en:fermented-dairy-desserts", "en:yogurts"],
+            "exclude_keywords": ["frozen", "cone"],
+        },
+    },
     "breaded_vegetables": {
         "fndds": {
             "keywords": ["fried vegetable", "breaded vegetable"],
