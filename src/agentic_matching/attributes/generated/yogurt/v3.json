@@ -2,7 +2,7 @@
   {
     "name": "is_greek",
     "kind": "boolean",
-    "description": "Indicates whether the product is Greek-style yogurt, based on explicit keywords in both records.",
+    "description": "Is this a Greek-style yogurt?",
     "fndds_keywords": [
       "greek"
     ],
@@ -14,7 +14,7 @@
   {
     "name": "fat_level",
     "kind": "categorical",
-    "description": "Fat content tier based on milk type (fat-free, low-fat, full-fat), derived from milk type descriptors in both records.",
+    "description": "Fat content tier of the yogurt",
     "categories": {
       "fat_free": {
         "fndds_keywords": [
@@ -55,9 +55,24 @@
     }
   },
   {
+    "name": "is_frozen",
+    "kind": "boolean",
+    "description": "Is this a frozen yogurt or frozen dessert?",
+    "fndds_keywords": [
+      "frozen",
+      "frozen yogurt"
+    ],
+    "off_keywords": [
+      "frozen",
+      "glace",
+      "frozen dessert",
+      "soft serve"
+    ]
+  },
+  {
     "name": "flavor",
     "kind": "categorical",
-    "description": "Specific flavor of the yogurt, based on observed flavors in the sample data (vanilla, strawberry, blueberry, peach, plain).",
+    "description": "Specific flavor of the yogurt (e.g., vanilla, strawberry, peach, chocolate, plain)",
     "categories": {
       "vanilla": {
         "fndds_keywords": [
@@ -75,17 +90,7 @@
         "off_keywords": [
           "strawberry",
           "fraise",
-          "fruits rouges"
-        ]
-      },
-      "blueberry": {
-        "fndds_keywords": [
-          "blueberry"
-        ],
-        "off_keywords": [
-          "blueberry",
-          "bleu",
-          "blue"
+          "fraise de"
         ]
       },
       "peach": {
@@ -97,6 +102,25 @@
           "p\u00eache"
         ]
       },
+      "blueberry": {
+        "fndds_keywords": [
+          "blueberry"
+        ],
+        "off_keywords": [
+          "blueberry",
+          "fraises",
+          "fraises bleues"
+        ]
+      },
+      "chocolate": {
+        "fndds_keywords": [
+          "chocolate"
+        ],
+        "off_keywords": [
+          "chocolate",
+          "chocolat"
+        ]
+      },
       "plain": {
         "fndds_keywords": [
           "plain"
@@ -104,7 +128,7 @@
         "off_keywords": [
           "plain",
           "nature",
-          "without flavor"
+          "natural"
         ]
       }
     }
