@@ -19,7 +19,14 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from agentic_matching.attributes.agent_loop import _pooled_values, load_latest_attributes
+from agentic_matching.attributes.agent_loop import (
+    _candidate_boolean_terms,
+    _field_stats,
+    _load_block,
+    _pooled_values,
+    _sample_pairs,
+    load_latest_attributes,
+)
 from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.rules import filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
@@ -30,6 +37,7 @@ from agentic_matching.linking.evaluate import (
     attribute_discriminative_power,
     best_match_per_off,
     export_predictions_csv,
+    holdout_error_examples,
     plausibility_report,
     score_against_holdout,
 )
@@ -46,6 +54,7 @@ class LinkingRound:
     degeneracy_flags: list[dict[str, Any]]
     holdout_evaluation: dict[str, Any]
     attribute_discriminative_power: list[dict[str, Any]]
+    holdout_error_examples: dict[str, list[dict[str, Any]]]
     plausibility: dict[str, Any]
     # Raw candidate-pair count at threshold=0.0, *before* the 0.5 "confident match"
     # filter `plausibility` is computed from -- outer_loop.diagnose_blocking_problem
@@ -69,6 +78,18 @@ def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
 def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list[LinkingRound]:
     client = client or get_llm_client()
     attrs = load_latest_attributes(block_name)
+
+    # Grounding for this loop's attribute-revision calls (below) -- the block doesn't
+    # change across rounds, so this is computed once, from the raw materialized block
+    # (data/blocks/<block>_{fndds,off}.parquet), not from splink_model.build_linker's
+    # prepared frames: those carry only unique_id/description/search_text/attribute
+    # columns, not the raw category/brand fields _field_stats needs. Same functions,
+    # same block-scoped data, the standalone attribute agent loop already uses -- see
+    # attributes/agent_loop.py::run_attribute_agent for the identical pattern.
+    raw_fndds_df, raw_off_df = _load_block(block_name)
+    sample_pairs = _sample_pairs(raw_fndds_df, raw_off_df)
+    field_stats = _field_stats(raw_fndds_df, raw_off_df)
+    candidate_terms = _candidate_boolean_terms(raw_fndds_df, raw_off_df, block_name)
 
     rounds: list[LinkingRound] = []
     prev_f1: float | None = None
@@ -94,6 +115,10 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         # size (see its docstring for why this is a different, complementary signal to
         # both holdout_eval's aggregate f1 and correlation_flags below).
         discriminative_power = attribute_discriminative_power(block_name, attrs)
+        # Concrete wrong pairs, not just aggregate numbers -- see its docstring for why
+        # this is what actually lets the revision LLM (below) reason about what NEW
+        # attribute would fix a real mistake, not just which existing ones are weak.
+        error_examples = holdout_error_examples(block_name, attrs, trained_settings)
 
         # Exported separately from `predictions` (not gated on the 0.5 "confident
         # match" threshold above): the CSV is a review artifact, not a decision, so it
@@ -135,6 +160,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 degeneracy_flags=degeneracy_flags,
                 holdout_evaluation=holdout_eval,
                 attribute_discriminative_power=discriminative_power,
+                holdout_error_examples=error_examples,
                 plausibility=plausibility,
                 n_candidate_pairs=len(all_predictions),
                 n_final_matches=n_final_written,
@@ -163,19 +189,24 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             break
 
         # Ask the LLM to revise the attribute set given this round's evaluation +
-        # a fresh correlation check, same as the standalone attribute agent loop.
+        # a fresh correlation check, same as the standalone attribute agent loop --
+        # including the same block-grounded sample_pairs/field_stats/candidate_terms
+        # (computed once, above), not just correlation/evaluation numbers in isolation.
         values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), off_df)
         correlation_flags = check_correlations(values_df)
         sys_p, user_p = build_attribute_prompt(
             block_name,
-            sample_pairs=[],
+            sample_pairs=sample_pairs,
             existing_attributes=attrs,
             correlation_flags=correlation_flags or None,
             evaluation={
                 **holdout_eval,
                 "degeneracy_flags": degeneracy_flags,
                 "attribute_discriminative_power": discriminative_power,
+                **error_examples,
             },
+            field_stats=field_stats,
+            candidate_terms=candidate_terms,
             guidance=get_seed_attribute_notes(block_name),
         )
         log.info(

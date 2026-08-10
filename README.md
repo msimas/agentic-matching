@@ -71,6 +71,24 @@ bounded by `AGENT_MAX_OUTER_ROUNDS` (default 2: "give re-blocking one chance," n
 open-ended search). Each round is logged to
 `data/artifacts/outer_loop_<block>_round<N>.json`.
 
+`--steps` runs only a subset of the three stages against a block already partway
+through the pipeline, e.g.:
+
+```bash
+# Redo attribute selection (and relink) without touching the existing blocking rule:
+uv run scripts/09_run_outer_loop.py --block beans --steps attributes,linking
+
+# Just relink against whatever attributes are already persisted:
+uv run scripts/09_run_outer_loop.py --block beans --steps linking
+```
+
+A skipped stage isn't rerun with cached results — it's just not touched, and whichever
+later stages you did include use its last persisted output as-is. The re-blocking
+feedback loop above only fires when `--steps` includes both `blocking` and `linking`
+(nothing to re-block *in response to* otherwise) — with either excluded, it runs a
+single round and logs a warning instead of looping if a blocking-shaped problem is
+found but can't be acted on this run.
+
 ## Visualizing matches (`scripts/08_visualize_matches.py`)
 
 Wraps splink's own Altair/HTML chart methods (`linking/charts.py`) for a block's

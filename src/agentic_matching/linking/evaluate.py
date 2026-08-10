@@ -135,18 +135,32 @@ def build_eval_frames(
     return fndds_df, off_df, true_labels
 
 
-def score_against_holdout(
-    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5
-) -> dict[str, Any]:
+def _build_holdout_predictions(
+    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any]
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str], pd.DataFrame | None]:
+    """Shared setup behind score_against_holdout and holdout_error_examples: build the
+    labeled holdout eval frames and run one exhaustive prediction pass against them
+    (the trained model's comparison weights, scored on the small, capped holdout
+    sample -- see build_eval_frames' docstring for why "1=1" blocking is safe only
+    here). Split out so both consumers pay for this once each, not twice."""
     fndds_df, off_df, true_labels = build_eval_frames(block_name, attrs)
     if fndds_df.empty or off_df.empty:
-        return {"n_holdout_positives": 0, "precision": None, "recall": None, "f1": None}
+        return fndds_df, off_df, true_labels, None
 
     eval_settings = dict(trained_settings)
     eval_settings["blocking_rules_to_generate_predictions"] = ["1=1"]  # eval sets are small; exhaustive is fine
 
     linker = Linker([fndds_df, off_df], eval_settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"])
     preds = linker.inference.predict(threshold_match_probability=0.0).as_pandas_dataframe()
+    return fndds_df, off_df, true_labels, preds
+
+
+def score_against_holdout(
+    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5
+) -> dict[str, Any]:
+    fndds_df, off_df, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
+    if fndds_df.empty or off_df.empty:
+        return {"n_holdout_positives": 0, "precision": None, "recall": None, "f1": None}
 
     # Best (highest-probability) OFF match per FNDDS-side unique_id.
     best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_l")
@@ -169,6 +183,70 @@ def score_against_holdout(
         "recall": recall,
         "f1": f1,
     }
+
+
+def _holdout_error_examples(
+    preds: pd.DataFrame, true_labels: dict[str, str], threshold: float = 0.5, n: int = 5
+) -> dict[str, list[dict[str, Any]]]:
+    """Pure logic behind holdout_error_examples, split out so it's testable against a
+    small synthetic `preds` frame without needing a real trained linker (same rationale
+    as _attribute_discriminative_power's split from attribute_discriminative_power)."""
+    cols = [c for c in ("unique_id_l", "unique_id_r", "description_l", "description_r", "match_probability") if c in preds.columns]
+    if preds.empty or not true_labels:
+        return {"false_positives": [], "false_negatives": []}
+
+    # False positives: the model's best-scoring OFF match per FNDDS record, confident
+    # (>= threshold) but NOT the true calibration pair -- the n highest-probability
+    # such mistakes, i.e. what's most urgently over-matching right now.
+    best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_l")
+    confident = best[best["match_probability"] >= threshold]
+    if confident.empty:
+        # DataFrame.apply(axis=1) on an empty frame returns an empty DataFrame, not a
+        # boolean Series, which breaks confident[is_wrong] below -- skip straight to
+        # "no false positives" instead.
+        false_positives = confident
+    else:
+        is_wrong = confident.apply(lambda r: true_labels.get(r["unique_id_l"]) != r["unique_id_r"], axis=1)
+        false_positives = confident[is_wrong].sort_values("match_probability", ascending=False).head(n)
+
+    # False negatives: for every TRUE calibration pair, what score did the model
+    # actually give *that specific pair* (not whatever else won for that FNDDS
+    # record) -- merged, not looped, so this stays fast even with hundreds of holdout
+    # positives. A true pair that never became a candidate at all (no row in `preds`)
+    # is a blocking-shaped gap, not an attribute one, so it's left out here on purpose
+    # -- outer_loop.diagnose_blocking_problem is where that concern belongs.
+    true_pairs = pd.DataFrame(list(true_labels.items()), columns=["unique_id_l", "true_unique_id_r"])
+    merged = true_pairs.merge(
+        preds, left_on=["unique_id_l", "true_unique_id_r"], right_on=["unique_id_l", "unique_id_r"], how="inner"
+    )
+    false_negatives = merged[merged["match_probability"] < threshold].sort_values("match_probability").head(n)
+
+    return {
+        "false_positives": false_positives[cols].to_dict(orient="records"),
+        "false_negatives": false_negatives[cols].to_dict(orient="records") if not false_negatives.empty else [],
+    }
+
+
+def holdout_error_examples(
+    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5, n: int = 5
+) -> dict[str, list[dict[str, Any]]]:
+    """Concrete false-positive/false-negative example PAIRS from the calibration
+    holdout -- the piece score_against_holdout's aggregate precision/recall/f1 (and
+    attribute_discriminative_power's per-attribute agreement rates) can't provide:
+    which SPECIFIC records the current attribute set gets wrong, and what they actually
+    look like, so the attribute-revision LLM can reason about what new signal would fix
+    a real mistake instead of only seeing that mistakes exist in aggregate.
+
+    "false_positives": pairs confidently (>= `threshold`) predicted as a match that
+    are NOT the true calibration pair. "false_negatives": true calibration pairs the
+    model scored below `threshold` for that specific pair. Both capped at `n`,
+    ranked by how confidently wrong (false positives) or how far short of the
+    threshold (false negatives) they are -- the most actionable examples first.
+    """
+    _, _, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
+    if preds is None:
+        return {"false_positives": [], "false_negatives": []}
+    return _holdout_error_examples(preds, true_labels, threshold=threshold, n=n)
 
 
 def _attribute_discriminative_power(

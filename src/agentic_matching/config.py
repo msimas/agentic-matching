@@ -7,7 +7,6 @@ variables here (see .env.example) so no other module needs to change when they d
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -112,8 +111,24 @@ class AgentLoopSettings(BaseSettings):
     max_outer_rounds: int = 2
 
 
+class LoggingSettings(BaseSettings):
+    """`LOG_LEVEL` (default INFO; not under LLMSettings/AgentLoopSettings' `LLM_`/
+    `AGENT_` prefixes since it's not specific to either -- it's the standard,
+    unprefixed name most CLI tools use for this). A pydantic BaseSettings, like every
+    other settings class here, specifically so it reads `.env` the same way they do --
+    verified real bug otherwise: a plain `os.environ.get("LOG_LEVEL")` (this class's
+    predecessor) only sees a variable actually exported in the shell, silently ignoring
+    `.env`'s LOG_LEVEL=DEBUG whenever a script is launched without that also being
+    exported (e.g. via `nohup uv run ...` from a shell that never `export`ed it)."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    log_level: str = "INFO"
+
+
 llm_settings = LLMSettings()
 agent_loop_settings = AgentLoopSettings()
+logging_settings = LoggingSettings()
 
 
 def configure_logging() -> None:
@@ -121,16 +136,17 @@ def configure_logging() -> None:
     up console logging -- replaces the `logging.basicConfig(level=logging.INFO, ...)`
     line every script/entry point previously duplicated.
 
-    Respects LOG_LEVEL (default INFO; not under LLMSettings/AgentLoopSettings' `LLM_`/
-    `AGENT_` prefixes since it's not specific to either -- it's the standard,
-    unprefixed name most CLI tools use for this). Set LOG_LEVEL=DEBUG to also see
+    Respects LOG_LEVEL (see LoggingSettings above). Set LOG_LEVEL=DEBUG to also see
     llm/client.py's and llm/mock.py's full LLM query/response logging, which is
     deliberately gated at DEBUG rather than INFO: it's the actual reasoning input/output
     for every agent-loop call, invaluable when diagnosing a bad or surprising proposal,
     but too verbose (full prompts, every round) to want on by default.
     """
-    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, None)
+    level = getattr(logging, logging_settings.log_level.upper(), None)
     if not isinstance(level, int):
         level = logging.INFO
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+    # force=True -- logging.basicConfig() is a no-op if the root logger already has
+    # handlers (e.g. something else configured logging first, or this is called more
+    # than once), which would otherwise make a second call to this function silently
+    # not change anything.
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s", force=True)

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from agentic_matching.attributes.agent_loop import run_attribute_agent
@@ -37,6 +38,11 @@ from agentic_matching.linking.agent_loop import LinkingRound, run_linking_agent
 from agentic_matching.llm.client import ChatClient, get_llm_client
 
 log = logging.getLogger(__name__)
+
+# Every stage `run_outer_loop`'s `steps` parameter can select -- in pipeline order,
+# which is also the order they run in within a round regardless of the order `steps`
+# lists them.
+ALL_STEPS = ("blocking", "attributes", "linking")
 
 # Every real linking round this project has produced, even for its thinnest/most
 # degenerate block ("breaded_vegetables" at its narrowest), has cleared several hundred
@@ -98,20 +104,58 @@ def diagnose_blocking_problem(rounds: list[LinkingRound]) -> str | None:
     )
 
 
-def run_outer_loop(block_name: str, client: ChatClient | None = None) -> list[OuterRound]:
+def run_outer_loop(
+    block_name: str, client: ChatClient | None = None, steps: Sequence[str] = ALL_STEPS
+) -> list[OuterRound]:
+    """Run the pipeline stages named in `steps` (any non-empty subset of
+    "blocking"/"attributes"/"linking", pipeline order regardless of how `steps` orders
+    them) for `block_name`, once per outer round.
+
+    Skipping a stage means exactly that -- it doesn't run at all, so e.g. skipping
+    "attributes" leaves whatever's already persisted in attributes/generated/<block>/
+    latest.json untouched and used as-is by "linking" if that's included. This is the
+    tool for "just redo attribute selection against the existing block" (steps=
+    ("attributes", "linking")) or "just redo linking against the existing attributes"
+    (steps=("linking",)) without paying for a stage you don't want re-run.
+
+    The re-blocking feedback loop (see this module's docstring) only makes sense when
+    "blocking" is actually a step that can run again in response to a diagnosed
+    problem -- if "blocking" isn't in `steps`, or "linking" isn't (so there's nothing
+    to diagnose from), this runs a single outer round and stops regardless of what
+    diagnose_blocking_problem would have said, logging a warning if it *would* have
+    flagged something so that's not silently lost.
+    """
     client = client or get_llm_client()
+    steps_set = set(steps)
+    invalid = steps_set - set(ALL_STEPS)
+    if invalid:
+        raise ValueError(f"Unknown step(s) {sorted(invalid)!r}; valid steps are {ALL_STEPS}")
+    if not steps_set:
+        raise ValueError(f"steps must be a non-empty subset of {ALL_STEPS}")
+    can_loop = "blocking" in steps_set and "linking" in steps_set
+
     rounds: list[OuterRound] = []
     linking_feedback: str | None = None
 
     for round_idx in range(agent_loop_settings.max_outer_rounds):
-        log.info("=== outer round %d for block '%s': blocking ===", round_idx, block_name)
-        run_blocking_agent(block_name, client=client, linking_feedback=linking_feedback)
+        if "blocking" in steps_set:
+            log.info("=== outer round %d for block '%s': blocking ===", round_idx, block_name)
+            run_blocking_agent(block_name, client=client, linking_feedback=linking_feedback)
+        else:
+            log.info("=== outer round %d for block '%s': skipping blocking (not in steps) ===", round_idx, block_name)
 
-        log.info("=== outer round %d for block '%s': attributes ===", round_idx, block_name)
-        run_attribute_agent(block_name, client=client)
+        if "attributes" in steps_set:
+            log.info("=== outer round %d for block '%s': attributes ===", round_idx, block_name)
+            run_attribute_agent(block_name, client=client)
+        else:
+            log.info("=== outer round %d for block '%s': skipping attributes (not in steps) ===", round_idx, block_name)
 
-        log.info("=== outer round %d for block '%s': linking ===", round_idx, block_name)
-        linking_rounds = run_linking_agent(block_name, client=client)
+        if "linking" in steps_set:
+            log.info("=== outer round %d for block '%s': linking ===", round_idx, block_name)
+            linking_rounds = run_linking_agent(block_name, client=client)
+        else:
+            log.info("=== outer round %d for block '%s': skipping linking (not in steps) ===", round_idx, block_name)
+            linking_rounds = []
 
         trigger = diagnose_blocking_problem(linking_rounds)
         last = linking_rounds[-1] if linking_rounds else None
@@ -131,6 +175,18 @@ def run_outer_loop(block_name: str, client: ChatClient | None = None) -> list[Ou
                 "round %d; stopping.",
                 block_name,
                 round_idx,
+            )
+            break
+        if not can_loop:
+            log.warning(
+                "Outer round %d flagged a blocking problem for '%s' (%s), but "
+                "re-blocking isn't possible this run ('blocking' and/or 'linking' not "
+                "in steps=%s) -- stopping after one round instead of looping with "
+                "nothing new to try.",
+                round_idx,
+                block_name,
+                trigger,
+                sorted(steps_set),
             )
             break
         if round_idx == agent_loop_settings.max_outer_rounds - 1:

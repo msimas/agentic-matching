@@ -2,14 +2,19 @@
 """Run the bounded outer loop for a block: blocking -> attributes -> linking, then
 (if linking's result looks like a blocking problem, not an attribute problem) feed that
 finding back into another round of blocking and repeat. See outer_loop.py's module
-docstring for when/why this re-blocks."""
+docstring for when/why this re-blocks.
+
+Use --steps to run only a subset of stages against a block already partway through the
+pipeline -- e.g. --steps attributes,linking to redo attribute selection (and relink)
+without touching the existing blocking rule, or --steps linking to just relink against
+whatever attributes are already persisted."""
 
 from __future__ import annotations
 
 import typer
 
 from agentic_matching.config import BLOCKS, configure_logging
-from agentic_matching.outer_loop import run_outer_loop
+from agentic_matching.outer_loop import ALL_STEPS, run_outer_loop
 
 app = typer.Typer(add_completion=False)
 
@@ -17,11 +22,23 @@ app = typer.Typer(add_completion=False)
 @app.command()
 def main(
     block: str = typer.Option(..., "--block", help=f"Block to run: one of {BLOCKS}"),
+    steps: str = typer.Option(
+        ",".join(ALL_STEPS),
+        "--steps",
+        help=f"Comma-separated subset of {ALL_STEPS} to run (pipeline order regardless "
+        "of how you list them). A skipped stage isn't touched -- it isn't rerun with "
+        "cached results, its prior output (e.g. attributes/generated/<block>/latest.json) "
+        "is used as-is by whichever later stages you did include.",
+    ),
 ) -> None:
     configure_logging()
     if block not in BLOCKS:
         raise typer.BadParameter(f"--block must be one of {BLOCKS}, got {block!r}")
-    rounds = run_outer_loop(block)
+    parsed_steps = [s.strip() for s in steps.split(",") if s.strip()]
+    invalid = set(parsed_steps) - set(ALL_STEPS)
+    if invalid:
+        raise typer.BadParameter(f"--steps must be a subset of {ALL_STEPS}, got unknown step(s) {sorted(invalid)}")
+    rounds = run_outer_loop(block, steps=parsed_steps)
     for r in rounds:
         typer.echo(
             f"outer round {r.round}: linking_rounds={r.linking_rounds_completed} "

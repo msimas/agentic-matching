@@ -194,13 +194,26 @@ You will be shown:
     which attributes you propose, alongside everything else you're shown.
   - On revision rounds, "existing_attributes" (the current set), "correlation_flags" \
     (a Cramer's V report flagging attribute pairs that are too correlated -- drop or \
-    redefine them), and "previous_round_evaluation" (linkage results, including \
-    "attribute_discriminative_power": each existing attribute's agreement rate on \
-    known-true pairs vs. random non-match pairs from a calibration sample -- an \
-    attribute agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, \
-    isn't discriminating matches from non-matches at all and is a strong drop/redefine \
-    candidate regardless of how it correlates with other attributes; a big gap, e.g. \
-    true=0.95/decoy=0.12, means it's doing real work and should be kept).
+    redefine them), and "previous_round_evaluation" (linkage results, including):
+      - "attribute_discriminative_power": each existing attribute's agreement rate on \
+        known-true pairs vs. random non-match pairs from a calibration sample -- an \
+        attribute agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, \
+        isn't discriminating matches from non-matches at all and is a strong \
+        drop/redefine candidate regardless of how it correlates with other attributes; \
+        a big gap, e.g. true=0.95/decoy=0.12, means it's doing real work and should be \
+        kept.
+      - "false_positives"/"false_negatives": concrete example PAIRS (with both sides' \
+        description text) the current attribute set got wrong on the calibration \
+        sample -- a false positive is a pair confidently predicted as a match that \
+        isn't the true one; a false negative is a true pair the model scored too low. \
+        This is where a genuinely NEW attribute idea should come from: look at what a \
+        false-positive pair's two descriptions actually differ on that no existing \
+        attribute captures (propose an attribute for that), and what a false-negative \
+        pair's two descriptions actually share that no existing attribute credits them \
+        for (the current attributes may be too narrow/keyword-specific to catch it). \
+        Aggregate numbers alone (attribute_discriminative_power, precision/recall/f1) \
+        can tell you an attribute is weak; these examples are what let you reason \
+        about what to add instead of only what to remove.
 
 Reply with ONLY a JSON object matching this SHAPE (this example's names/keywords are \
 placeholders illustrating the schema for an unrelated example block, "widgets" -- do \
