@@ -34,7 +34,7 @@ from dataclasses import asdict, dataclass
 from agentic_matching.attributes.agent_loop import run_attribute_agent
 from agentic_matching.blocking.agent_loop import run_blocking_agent
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
-from agentic_matching.linking.agent_loop import LinkingRound, run_linking_agent
+from agentic_matching.linking.agent_loop import LinkingRound, run_linking_agent, select_best_round
 from agentic_matching.llm.client import ChatClient, get_llm_client
 
 log = logging.getLogger(__name__)
@@ -68,23 +68,26 @@ def diagnose_blocking_problem(rounds: list[LinkingRound]) -> str | None:
     holdout f1 with plenty of candidate pairs and a non-degenerate model, low
     attribute_discriminative_power on individual attributes) are exactly what the inner
     linking loop's own attribute-revision step already exists to fix, so they're
-    deliberately NOT reasons to re-block here; only checks the LAST round, since that's
-    the one attribute revision had every opportunity to already fix.
+    deliberately NOT reasons to re-block here; only checks the BEST round (see
+    linking.agent_loop.select_best_round), not just the chronologically last one --
+    that's what actually ends up as the deliverable, so it's what the diagnosis (and
+    outer_loop's own reported final_n_candidate_pairs/final_holdout_f1) should reflect,
+    not whatever a later, possibly-regressed round happened to leave behind.
 
     Returns a concise, factual finding string (fed to build_blocking_prompt as
     `linking_feedback`) if triggered, else None.
     """
     if not rounds:
         return None
-    last = rounds[-1]
+    best = select_best_round(rounds)
     reasons = []
-    if last.n_candidate_pairs < MIN_CANDIDATE_PAIRS:
+    if best.n_candidate_pairs < MIN_CANDIDATE_PAIRS:
         reasons.append(
-            f"only {last.n_candidate_pairs} raw candidate pairs were generated even "
+            f"only {best.n_candidate_pairs} raw candidate pairs were generated even "
             f"after {len(rounds)} round(s) of attribute revision, well below a usable "
             f"threshold ({MIN_CANDIDATE_PAIRS})"
         )
-    collapsed = [f for f in last.degeneracy_flags if f.get("kind") == "collapsed"]
+    collapsed = [f for f in best.degeneracy_flags if f.get("kind") == "collapsed"]
     if collapsed:
         cols = ", ".join(f.get("column", "?") for f in collapsed)
         reasons.append(
@@ -158,13 +161,16 @@ def run_outer_loop(
             linking_rounds = []
 
         trigger = diagnose_blocking_problem(linking_rounds)
-        last = linking_rounds[-1] if linking_rounds else None
+        # select_best_round, not linking_rounds[-1] -- see its docstring; keeps what
+        # this reports consistent with what run_linking_agent actually left as the
+        # deliverable (final_matches_<block>.csv), not a possibly-regressed last round.
+        best = select_best_round(linking_rounds) if linking_rounds else None
         outer_round = OuterRound(
             round=round_idx,
             trigger=trigger,
             linking_rounds_completed=len(linking_rounds),
-            final_n_candidate_pairs=last.n_candidate_pairs if last else 0,
-            final_holdout_f1=last.holdout_evaluation.get("f1") if last else None,
+            final_n_candidate_pairs=best.n_candidate_pairs if best else 0,
+            final_holdout_f1=best.holdout_evaluation.get("f1") if best else None,
         )
         rounds.append(outer_round)
         _write_artifact(block_name, outer_round)

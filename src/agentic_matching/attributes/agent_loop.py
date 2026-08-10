@@ -65,6 +65,27 @@ class AttributeRound:
     rationale: str
 
 
+def select_final_attributes(rounds: list[AttributeRound]) -> list[dict[str, Any]]:
+    """Pick which round's attribute set to persist as attributes/generated/<block>/
+    latest.json -- NOT just the last round. Hitting max_rounds before the
+    correlation-flag count returns to 0 means the LAST round isn't necessarily the
+    best one produced (same principle as blocking/agent_loop.py's _select_final_rule
+    and linking/agent_loop.py's select_best_round -- this loop's only quality signal is
+    correlation_flags, since it never trains a real model against real match outcomes;
+    see this module's docstring for why that's a deliberately cheaper, earlier check).
+
+    Scored as (non-empty, fewest correlation flags, round index) in that priority
+    order: an empty attribute set is disqualified outright (trivially "0 correlation
+    flags" but useless), then prefer fewer flags, then the most-revised (latest) round
+    among ties.
+    """
+
+    def _score(r: AttributeRound) -> tuple[bool, int, int]:
+        return (bool(r.attributes), -len(r.correlation_flags), r.round)
+
+    return max(rounds, key=_score).attributes
+
+
 def _load_block(block_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     fndds_path = BLOCKS_DIR / f"{block_name}_fndds.parquet"
     off_path = BLOCKS_DIR / f"{block_name}_off.parquet"
@@ -261,7 +282,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
             break
         existing = attrs
 
-    _persist_generated(block_name, rounds[-1].attributes, version=len(rounds))
+    _persist_generated(block_name, select_final_attributes(rounds), version=len(rounds))
     return rounds
 
 

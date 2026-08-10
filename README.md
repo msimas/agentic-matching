@@ -42,18 +42,47 @@ descending, with each matching attribute's value on both sides alongside it — 
 that directly in a spreadsheet to inspect the actual match results.
 
 **`data/artifacts/final_matches_<block>.csv`** (no round number — overwritten each
-round, always reflects the latest run) is the actual deliverable, distinct from the
-review CSV above: `linking/evaluate.py::best_match_per_off` collapses every candidate
-pair down to the single best (highest `match_probability`) FNDDS record per OFF/
-commercial-product record. The real goal here is attaching nutritional information
-(FNDDS) to commercial products — a product should end up with *one* nutrition profile
-attached, not several competing FNDDS candidates — while one FNDDS record can
-legitimately attach to many different commercial products (many brands' "Black Beans"
-can all point at the same "Black beans, canned" nutrition profile), so only the OFF
-side is deduplicated. Nothing about this assumes OFF specifically: it only needs a
-`unique_id_r` column identifying the commercial-product side, so the same pipeline
-would work unchanged against a proprietary retail catalog (e.g. Circana) substituted
-for OFF.
+round, reflects the *best* round the loop produced, not necessarily the last one; see
+`select_best_round` below) is the actual deliverable, distinct from the review CSV
+above: `linking/evaluate.py::best_match_per_off` collapses every candidate pair down to
+the single best (highest `match_probability`) FNDDS record per OFF/commercial-product
+record. The real goal here is attaching nutritional information (FNDDS) to commercial
+products — a product should end up with *one* nutrition profile attached, not several
+competing FNDDS candidates — while one FNDDS record can legitimately attach to many
+different commercial products (many brands' "Black Beans" can all point at the same
+"Black beans, canned" nutrition profile), so only the OFF side is deduplicated. Nothing
+about this assumes OFF specifically: it only needs a `unique_id_r` column identifying
+the commercial-product side, so the same pipeline would work unchanged against a
+proprietary retail catalog (e.g. Circana) substituted for OFF.
+
+### A later round can regress -- picking the best round, not just the last one
+
+All three agent loops (blocking, attributes, linking) can run for several rounds before
+stopping (stabilization or `max_rounds`), and a later round isn't guaranteed to be
+better than an earlier one -- an LLM revision can make things worse, and the loop has
+no built-in reason to notice unless something explicitly checks. Each loop now selects
+its final result from *all* completed rounds using whatever quality signal it actually
+has, rather than blindly using whichever round happened to run last:
+
+- `blocking/agent_loop.py::_select_final_rule` -- prefers an earlier round if the
+  *last* round-to-round change in pair completeness/reduction ratio was negligible
+  (see its docstring for the verified case: a revision that grew the block from 148 to
+  1,282 FNDDS records while the proxy metric moved by less than the stabilization
+  threshold).
+- `attributes/agent_loop.py::select_final_attributes` -- prefers the round with the
+  fewest correlation flags (this loop's only quality signal, since it never trains a
+  real model).
+- `linking/agent_loop.py::select_best_round` -- prefers the round with the highest
+  holdout f1, but disqualifies any round with zero confident real-world matches
+  outright regardless of how good its calibration-proxy f1 looks. Verified real case
+  (yogurt, `qwen3:8b`): round 3 reached f1=0.048 with 55,516 confident matches; round
+  4's revision collapsed real-world matching to **zero** confident matches out of 296K
+  candidates, while its holdout f1 (0.024) merely looked "back to round 0's baseline" —
+  not obviously catastrophic on that number alone. If the loop's last round isn't the
+  selected best one, `final_matches_<block>.csv` is regenerated from the best round's
+  attributes before the loop returns (cheap: splink training/prediction is seconds,
+  the LLM call is what's expensive). `outer_loop.py`'s own reported metrics and
+  `diagnose_blocking_problem` use the same selection, not the last linking round.
 
 ## Outer loop: blocking<->linking feedback (`scripts/09_run_outer_loop.py`)
 

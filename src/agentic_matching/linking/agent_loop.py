@@ -75,6 +75,33 @@ def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
     return abs(prev_f1 - cur_f1) < agent_loop_settings.stabilization_delta
 
 
+def select_best_round(rounds: list[LinkingRound]) -> LinkingRound:
+    """Pick which round's results are the actual final deliverable -- NOT just the
+    last round, since a later revision can regress. Verified real case (yogurt,
+    LLM_DEVICE=ollama, qwen3:8b): round 3 reached holdout f1=0.048 with 55,516 real
+    confident matches; round 4's revision collapsed real-world matching to ZERO
+    confident matches (out of 296K candidates) while its holdout f1 (0.024) merely
+    looked "back to round 0's baseline," not obviously catastrophic -- the
+    calibration-holdout f1 metric alone does not reliably catch this class of
+    regression, only `plausibility` (the actual target-domain prediction count) does.
+    Public (not `_`-prefixed) since outer_loop.py needs the exact same selection, not
+    a re-implementation of it, to keep what it reports consistent with what
+    run_linking_agent actually leaves on disk as the deliverable.
+
+    Scored as (not collapsed, no degeneracy flags, holdout f1) in that priority order:
+    a round with zero confident real-world matches is disqualified outright regardless
+    of how good its calibration-proxy f1 looks; among rounds that aren't collapsed,
+    prefer no degeneracy flags, then the highest f1.
+    """
+
+    def _score(r: LinkingRound) -> tuple[bool, bool, float]:
+        collapsed = r.plausibility.get("n_pairs", 0) == 0
+        f1 = r.holdout_evaluation.get("f1") or 0.0
+        return (not collapsed, not r.degeneracy_flags, f1)
+
+    return max(rounds, key=_score)
+
+
 def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list[LinkingRound]:
     client = client or get_llm_client()
     attrs = load_latest_attributes(block_name)
@@ -237,6 +264,42 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             break
         attrs = new_attrs
         prev_f1 = cur_f1
+
+    # If the round the loop actually ended on isn't the best one produced (see
+    # select_best_round's docstring for the verified regression case), the "always
+    # reflects the latest run" final_matches_<block>.csv would otherwise silently ship
+    # a worse result than what this run already found. Retraining costs nothing
+    # LLM-related (splink training/prediction on these block sizes is seconds, not
+    # minutes) so this is cheap insurance, run regardless of how many rounds happened.
+    best = select_best_round(rounds)
+    if best.round != rounds[-1].round:
+        log.warning(
+            "block '%s': round %d regressed (plausibility n_pairs=%s, holdout f1=%s) "
+            "relative to round %d (n_pairs=%s, f1=%s) -- restoring round %d's "
+            "attributes as the final deliverable instead of leaving the regressed "
+            "round's results in final_matches_%s.csv.",
+            block_name,
+            rounds[-1].round,
+            rounds[-1].plausibility.get("n_pairs"),
+            rounds[-1].holdout_evaluation.get("f1"),
+            best.round,
+            best.plausibility.get("n_pairs"),
+            best.holdout_evaluation.get("f1"),
+            best.round,
+            block_name,
+        )
+        linker, _fndds_df, _off_df, _attrs = splink_model.build_linker(block_name, best.attributes)
+        splink_model.train(linker, best.attributes)
+        best_predictions = splink_model.predict(linker, threshold=0.0)
+        final_matches = best_match_per_off(best_predictions)
+        final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
+        n_final_written = export_predictions_csv(final_matches, best.attributes, final_matches_csv_path, top_n=None)
+        log.info(
+            "Restored %s from round %d (%d OFF records, each with its single best FNDDS match)",
+            final_matches_csv_path,
+            best.round,
+            n_final_written,
+        )
 
     return rounds
 
