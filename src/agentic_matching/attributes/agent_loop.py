@@ -28,7 +28,7 @@ from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.rules import compute_attribute_values, filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
-from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings
+from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings, round_temperature
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_attribute_prompt
 
@@ -234,15 +234,18 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
             candidate_terms=candidate_terms,
             guidance=guidance,
         )
+        temperature = round_temperature(round_idx, has_prior_state=existing is not None)
         log.info(
-            "block '%s' round %d: asking the LLM to %s matching attributes -- this is "
-            "the slow step, everything else in this loop finishes in seconds.",
+            "block '%s' round %d: asking the LLM to %s matching attributes "
+            "(temperature=%.2f) -- this is the slow step, everything else in this "
+            "loop finishes in seconds.",
             block_name,
             round_idx,
             "propose" if round_idx == 0 else "revise",
+            temperature,
         )
         try:
-            response = client.complete_json(sys_p, user_p)
+            response = client.complete_json(sys_p, user_p, temperature=temperature)
             attrs = filter_valid_attributes(response["attributes"])
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: a real LLM

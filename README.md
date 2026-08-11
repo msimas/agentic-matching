@@ -302,12 +302,31 @@ Every agent-loop script calls `get_llm_client()`, selected by `LLM_DEVICE`.
   Requires a reasonably recent Ollama version for its OpenAI-compatible `/v1` API
   (including `response_format` JSON-mode support, which `llm/client.py` relies on) --
   verified against a real Ollama install over the course of this project's development.
+- **`LLM_DEVICE=databricks`**: a Databricks Model Serving pay-per-token endpoint.
+  Credentials come from the same `DATABRICKS_HOST`/`DATABRICKS_TOKEN` env var names the
+  Databricks CLI/SDK themselves use (not duplicated under an `LLM_`-prefixed name);
+  `DATABRICKS_LLM_ENDPOINT` is either a bare serving-endpoint name or the full
+  invocations URL copy-pasted from the Databricks UI's "Query endpoint" page — see
+  `.env.example`. Nothing to start/manage — it's already running as a cloud service.
+  Every call is a direct HTTP POST (not the `openai` SDK's automatic URL construction)
+  to that endpoint's own literal `.../serving-endpoints/<name>/invocations` URL — see
+  `llm/client.py`'s module docstring for why: Databricks' documented shared-gateway
+  pattern (routing by a `model` field in the request body) returned an HTML login-page
+  redirect for a real named endpoint on a real workspace, while the literal per-endpoint
+  URL returned a real API response; the token also needs `model-serving`/
+  `model-serving-inference` scope, which a scoped OAuth/service-principal token may not
+  have by default even though a full personal access token typically does. Verified
+  end-to-end against a real endpoint (`databricks-meta-llama-3-3-70b-instruct`).
+  **This is a paid endpoint** — every LLM call in every agent loop (many per block run)
+  costs real money while this is set; switch back to `LLM_DEVICE=ollama` when you're
+  not deliberately using it.
 - `LLM_DEVICE=mock`: offline, no server required. `llm/mock.py` implements the same
   `ChatClient` interface with deterministic keyword-mining heuristics, enough to
   exercise/test/demo the full pipeline end-to-end without any LLM installed.
 - Set `LLM_BASE_URL` instead to point at an already-running OpenAI-compatible server
   (e.g. a remote host, or a separately-managed Ollama instance) rather than launching
-  one locally.
+  one locally -- doesn't apply to `LLM_DEVICE=databricks`, which always uses its own
+  literal invocations URL regardless (see above).
 
 ## Known constraints at this project's data scale
 

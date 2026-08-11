@@ -1,4 +1,24 @@
 {
+  "beans": {
+    "fndds": {
+      "keywords": ["bean"],
+      "categories": ["Beans, baked", "Beans, black", "Beans, kidney", "Beans, pinto", "Beans, navy"],
+      "exclude_keywords": ["soybean", "peanut", "coffee"]
+    },
+    "off": {
+      "keywords": ["bean"],
+      "categories": [
+        "en:canned-legumes",
+        "en:canned-common-beans",
+        "en:common-beans",
+        "en:black-beans",
+        "en:pinto-beans",
+        "en:baked-beans-in-tomato-sauce"
+      ],
+      "exclude_keywords": ["soybean", "peanut", "coffee"]
+    },
+    "notes": "this block covers beans in general, not just baked beans. It includes black beans, kidney beans, pinto beans, navy beans, etc. It does not include soybeans (which are a separate block) or peanuts (which are legumes but not beans) or coffe beans. It also does not include mixed bean salads, dips, or rice and bean dishes, which are separate blocks."
+  },
   "yogurt": {
     "fndds": {
       "keywords": ["yogurt"],

@@ -142,13 +142,16 @@ class OllamaServerManager:
 
 def get_server_manager(settings: LLMSettings | None = None) -> OllamaServerManager:
     """Returns an `OllamaServerManager` for `settings` (default: module-level
-    `llm_settings`, i.e. whatever `.env` is set to). Raises if `LLM_DEVICE=mock` -- the
-    mock backend (see llm/mock.py) needs no server, so there's nothing to start."""
+    `llm_settings`, i.e. whatever `.env` is set to). Raises if `LLM_DEVICE=mock` or
+    `databricks` -- the mock backend (see llm/mock.py) needs no server since it's a
+    pure-Python stand-in, and Databricks Model Serving is always an already-running,
+    externally-managed cloud service (see config.DatabricksSettings) -- neither has
+    anything for get_server_manager to start/stop."""
     settings = settings or llm_settings
-    if settings.device == "mock":
+    if settings.device in ("mock", "databricks"):
         raise ValueError(
-            "LLM_DEVICE=mock needs no server to start (llm/mock.py is a pure-Python "
-            "stand-in) -- there's nothing for get_server_manager to do here."
+            f"LLM_DEVICE={settings.device} needs no server to start -- there's nothing "
+            "for get_server_manager to do here."
         )
     return OllamaServerManager(settings)
 

@@ -1,26 +1,18 @@
 [
   {
-    "name": "bean_type",
+    "name": "beans_bean_type",
     "kind": "categorical",
-    "description": "Specifies the specific type of bean (e.g., kidney, pinto, black, white, lima, chickpeas, lentils, green) based on explicit keywords in both the FNDDS description and OFF product name. This attribute replaces multiple mutually exclusive boolean flags (e.g., is_kidney, is_pinto) to avoid violating conditional independence in the Fellegi-Sunter model.",
+    "description": "The specific type of bean involved.",
     "categories": {
-      "kidney": {
+      "green": {
         "fndds_keywords": [
-          "kidney"
+          "green",
+          "string beans"
         ],
         "off_keywords": [
-          "kidney",
-          "kidneybohnen",
-          "kidney beans"
-        ]
-      },
-      "pinto": {
-        "fndds_keywords": [
-          "pinto"
-        ],
-        "off_keywords": [
-          "pinto",
-          "la preferida pinto beans"
+          "green",
+          "haricots verts",
+          "petit pois"
         ]
       },
       "black": {
@@ -28,9 +20,63 @@
           "black"
         ],
         "off_keywords": [
-          "black",
-          "black beans",
-          "whole black beans"
+          "black"
+        ]
+      },
+      "kidney": {
+        "fndds_keywords": [
+          "kidney"
+        ],
+        "off_keywords": [
+          "kidney"
+        ]
+      },
+      "pinto": {
+        "fndds_keywords": [
+          "pinto"
+        ],
+        "off_keywords": [
+          "pinto"
+        ]
+      },
+      "lima": {
+        "fndds_keywords": [
+          "lima"
+        ],
+        "off_keywords": [
+          "lima"
+        ]
+      },
+      "chickpea": {
+        "fndds_keywords": [
+          "chickpeas"
+        ],
+        "off_keywords": [
+          "chickpea",
+          "garbanzo"
+        ]
+      },
+      "soy": {
+        "fndds_keywords": [
+          "soy",
+          "soybeans"
+        ],
+        "off_keywords": [
+          "soy"
+        ]
+      },
+      "lentil": {
+        "fndds_keywords": [
+          "lentils"
+        ],
+        "off_keywords": [
+          "lentil"
+        ]
+      },
+      "navy": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "navy"
         ]
       },
       "white": {
@@ -39,75 +85,30 @@
         ],
         "off_keywords": [
           "white",
-          "white beans"
-        ]
-      },
-      "lima": {
-        "fndds_keywords": [
-          "lima"
-        ],
-        "off_keywords": [
-          "lima",
-          "baby lima beans",
-          "lima beans"
-        ]
-      },
-      "chickpeas": {
-        "fndds_keywords": [
-          "chickpeas",
-          "fava"
-        ],
-        "off_keywords": [
-          "chickpeas",
-          "fava bean",
-          "fava bean snack"
-        ]
-      },
-      "lentils": {
-        "fndds_keywords": [
-          "lentils"
-        ],
-        "off_keywords": [
-          "lentils",
-          "lentil",
-          "lentil chunks"
-        ]
-      },
-      "green": {
-        "fndds_keywords": [
-          "green"
-        ],
-        "off_keywords": [
-          "green beans",
-          "string beans"
+          "alubias blancas"
         ]
       }
     }
   },
   {
-    "name": "preparation_method",
+    "name": "beans_preparation_method",
     "kind": "categorical",
-    "description": "Specifies the preparation method of the beans (canned, dried, frozen, baked, refried, soup, or other), based on explicit terms in the descriptions. This replaces separate boolean flags (is_canned, is_dried) to ensure conditional independence and prevent false matches between canned and dried beans.",
+    "description": "How the beans are prepared (canned, dried, frozen, etc.).",
     "categories": {
       "canned": {
         "fndds_keywords": [
-          "canned",
-          "can"
+          "canned"
         ],
         "off_keywords": [
-          "canned",
-          "canned beans",
-          "canned legumes"
+          "canned"
         ]
       },
       "dried": {
         "fndds_keywords": [
-          "dried",
-          "dried beans"
+          "dried"
         ],
         "off_keywords": [
-          "dried",
-          "dried beans"
+          "dried"
         ]
       },
       "frozen": {
@@ -115,72 +116,52 @@
           "frozen"
         ],
         "off_keywords": [
-          "frozen",
-          "frozen beans"
-        ]
-      },
-      "baked": {
-        "fndds_keywords": [
-          "baked"
-        ],
-        "off_keywords": [
-          "baked beans"
-        ]
-      },
-      "refried": {
-        "fndds_keywords": [
-          "refried"
-        ],
-        "off_keywords": [
-          "refried beans"
-        ]
-      },
-      "soup": {
-        "fndds_keywords": [
-          "soup",
-          "soup"
-        ],
-        "off_keywords": [
-          "soup",
-          "bean soup"
+          "frozen"
         ]
       },
       "other": {
-        "fndds_keywords": [
-          "NFS",
-          "NS as to type",
-          "no added fat",
-          "fat added"
-        ],
-        "off_keywords": [
-          "mixed beans",
-          "mixed bean salad",
-          "other"
-        ]
+        "fndds_keywords": [],
+        "off_keywords": []
       }
     }
   },
   {
-    "name": "contains_meat",
+    "name": "beans_contains_meat",
     "kind": "boolean",
-    "description": "Flags whether the product contains meat (e.g., pork, bacon, ham, sausage, frankfurter), based on explicit terms in the product name or description. This attribute uses domain knowledge of common meat-in-bean products, including less common terms like 'bacon' and 'sausage', which are not captured in candidate_terms due to low frequency but are known to exist in real-world products.",
+    "description": "Indicates if the product contains meat (pork, chicken, beef, etc.).",
     "fndds_keywords": [
-      "pork",
-      "meat",
-      "bacon",
-      "ham",
-      "sausage",
-      "frank",
-      "frankfurter"
+      "meat"
     ],
     "off_keywords": [
       "pork",
       "bacon",
       "ham",
       "sausage",
-      "frank",
       "frankfurter",
-      "meat"
+      "beef",
+      "chicken"
+    ]
+  },
+  {
+    "name": "beans_is_burrito_ingredient",
+    "kind": "boolean",
+    "description": "Indicates if the product is described as an ingredient in a burrito.",
+    "fndds_keywords": [
+      "burrito"
+    ],
+    "off_keywords": [
+      "burrito"
+    ]
+  },
+  {
+    "name": "beans_is_taco_ingredient",
+    "kind": "boolean",
+    "description": "Indicates if the product is described as an ingredient in a taco.",
+    "fndds_keywords": [
+      "taco"
+    ],
+    "off_keywords": [
+      "taco"
     ]
   }
 ]

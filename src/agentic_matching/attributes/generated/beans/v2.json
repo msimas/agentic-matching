@@ -1,214 +1,173 @@
 [
   {
-    "name": "bean_type",
+    "name": "beans_bean_type",
     "kind": "categorical",
-    "description": "Categorizes the specific type of bean (e.g., kidney, pinto, green, black, white, lima, soy, chickpea) based on keywords in both descriptions. This replaces multiple mutually exclusive boolean attributes (like is_kidney, is_pinto) to preserve conditional independence.",
+    "description": "The specific type of bean involved (kidney, pinto, black, lima, etc.)",
     "categories": {
       "kidney": {
         "fndds_keywords": [
-          "kidney",
-          "kidney beans"
+          "kidney"
         ],
         "off_keywords": [
-          "kidney",
-          "kidney beans",
-          "judias verdes",
-          "bohnen"
+          "red kidney",
+          "kidney"
         ]
       },
       "pinto": {
         "fndds_keywords": [
-          "pinto",
-          "pinto beans"
+          "pinto"
         ],
         "off_keywords": [
-          "pinto",
-          "pinto beans"
-        ]
-      },
-      "green": {
-        "fndds_keywords": [
-          "green",
-          "string beans",
-          "green beans"
-        ],
-        "off_keywords": [
-          "green",
-          "green beans",
-          "flageolets verts",
-          "haricots verts",
-          "gr\u00fcne bohnen"
+          "pinto"
         ]
       },
       "black": {
         "fndds_keywords": [
-          "black",
-          "black beans",
-          "blackeyed peas"
+          "black"
         ],
         "off_keywords": [
-          "black",
-          "black beans",
-          "frijol negro",
-          "pousses de soja"
+          "black"
+        ]
+      },
+      "lima": {
+        "fndds_keywords": [
+          "lima"
+        ],
+        "off_keywords": [
+          "lima"
+        ]
+      },
+      "chickpea": {
+        "fndds_keywords": [
+          "chickpeas"
+        ],
+        "off_keywords": [
+          "chickpeas",
+          "garbanzo",
+          "pois-chiche"
+        ]
+      },
+      "navy": {
+        "fndds_keywords": [
+          "navy"
+        ],
+        "off_keywords": [
+          "navy"
         ]
       },
       "white": {
         "fndds_keywords": [
           "white",
-          "white beans",
-          "white beans"
+          "cannellini"
         ],
         "off_keywords": [
           "white",
-          "white beans",
-          "haricots beurre",
-          "tremo\u00e7os"
+          "cannellini",
+          "weisse",
+          "witte"
         ]
       },
-      "lima": {
+      "green": {
         "fndds_keywords": [
-          "lima",
-          "lima beans"
+          "green"
         ],
         "off_keywords": [
-          "lima",
-          "lima beans",
-          "frijol negro"
+          "green"
         ]
       },
-      "soy": {
+      "other": {
         "fndds_keywords": [
-          "soy",
-          "soybeans",
-          "soybean curd"
+          "beans",
+          "bean",
+          "peas",
+          "legumes"
         ],
         "off_keywords": [
-          "soy",
-          "soybeans",
-          "pousses de soja",
-          "habas tiernas"
-        ]
-      },
-      "chickpea": {
-        "fndds_keywords": [
-          "chickpeas",
-          "chickpea"
-        ],
-        "off_keywords": [
-          "chickpeas",
-          "chickpea"
+          "beans",
+          "bean",
+          "legumes"
         ]
       }
     }
   },
   {
-    "name": "preparation_method",
+    "name": "beans_preparation_method",
     "kind": "categorical",
-    "description": "Categorizes the preparation method (canned, dried, frozen, baked, refried) based on keywords in both descriptions. This replaces separate boolean attributes (is_canned, is_dried) to avoid false matches due to overlapping description similarity.",
+    "description": "How the beans are prepared (canned, dried, frozen, etc.)",
     "categories": {
       "canned": {
         "fndds_keywords": [
-          "canned",
-          "refried beans",
-          "soup, bean, canned"
+          "canned"
         ],
         "off_keywords": [
-          "canned",
-          "canned foods",
-          "canned-legumes",
-          "canned-common-beans"
+          "canned"
         ]
       },
       "dried": {
         "fndds_keywords": [
-          "dried",
-          "from dried",
-          "dried beans"
+          "dried"
         ],
         "off_keywords": [
-          "dried",
-          "dried beans",
-          "legume-seeds",
-          "pulses"
+          "dried"
         ]
       },
       "frozen": {
         "fndds_keywords": [
-          "frozen",
-          "frozen beans"
+          "frozen"
         ],
         "off_keywords": [
-          "frozen",
-          "frozen beans"
+          "frozen"
         ]
       },
-      "baked": {
+      "other": {
         "fndds_keywords": [
-          "baked",
-          "baked beans"
+          "fresh",
+          "cooked"
         ],
         "off_keywords": [
-          "baked",
-          "baked beans"
-        ]
-      },
-      "refried": {
-        "fndds_keywords": [
-          "refried",
-          "refried beans"
-        ],
-        "off_keywords": [
-          "refried",
-          "refried beans"
+          "fresh",
+          "cooked"
         ]
       }
     }
   },
   {
-    "name": "contains_meat",
+    "name": "beans_contains_meat",
     "kind": "boolean",
-    "description": "Indicates whether the product contains meat (e.g., pork, chicken, beef) in the description. This is a distinct attribute from bean type and preparation, focusing on ingredient composition.",
+    "description": "Indicates whether the product contains meat (pork, beef, chicken, etc.)",
     "fndds_keywords": [
-      "pork",
-      "beef",
-      "chicken",
-      "meat",
-      "with meat",
-      "with beef",
-      "with pork"
+      "meat"
     ],
     "off_keywords": [
       "pork",
+      "bacon",
+      "ham",
+      "sausage",
+      "frank",
       "beef",
-      "chicken",
-      "meat",
-      "with meat",
-      "with beef",
-      "with pork"
+      "chicken"
     ]
   },
   {
-    "name": "is_in_mixed_dish",
+    "name": "beans_with_rice",
     "kind": "boolean",
-    "description": "Indicates whether the product is part of a mixed dish (e.g., burrito, taco, fajita, soup) rather than a standalone bean product. This helps distinguish between single-ingredient and multi-component products.",
+    "description": "Indicates whether the product includes rice",
     "fndds_keywords": [
-      "taco",
-      "burrito",
-      "taco with beans",
-      "soup",
-      "mixed dishes",
-      "with rice",
-      "with cheese"
+      "rice"
     ],
     "off_keywords": [
-      "taco",
-      "burrito",
-      "fajita",
-      "soup",
-      "mixed",
-      "with rice",
-      "with cheese"
+      "rice"
+    ]
+  },
+  {
+    "name": "beans_is_szechuan",
+    "kind": "boolean",
+    "description": "Indicates if the product is prepared in a Szechuan style",
+    "fndds_keywords": [
+      "szechuan"
+    ],
+    "off_keywords": [
+      "szechuan"
     ]
   }
 ]

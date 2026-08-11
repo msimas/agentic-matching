@@ -35,6 +35,7 @@ from agentic_matching.attributes.agent_loop import run_attribute_agent
 from agentic_matching.blocking.agent_loop import run_blocking_agent
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
 from agentic_matching.linking.agent_loop import LinkingRound, run_linking_agent, select_best_round
+from agentic_matching.linking.degeneracy_check import degenerate_attribute_columns
 from agentic_matching.llm.client import ChatClient, get_llm_client
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,26 @@ def diagnose_blocking_problem(rounds: list[LinkingRound]) -> str | None:
             f"after {len(rounds)} round(s) of attribute revision, well below a usable "
             f"threshold ({MIN_CANDIDATE_PAIRS})"
         )
-    collapsed = [f for f in best.degeneracy_flags if f.get("kind") == "collapsed"]
+    # Only a collapsed `description` (or other non-attribute) comparison implicates
+    # blocking -- a collapsed *attribute* comparison means that one derived attribute
+    # carries no discriminating signal in this block, which is an attribute-shaped
+    # problem, not a blocking one (see degenerate_attribute_columns's docstring). The
+    # inner linking loop now proactively drops those itself before a round is even
+    # recorded (see run_linking_agent's retrain-on-degeneracy loop), so this should
+    # rarely fire on an attribute name in practice -- excluded here regardless, as a
+    # correctness guarantee rather than something that merely happens to hold today.
+    # kinds={"collapsed"} only, matching this function's own narrower scope (see its
+    # docstring) -- label_switching/untrained attribute flags are the inner loop's
+    # concern (it checks all three), not a reason to trigger re-blocking here.
+    attr_names = {a["name"] for a in best.attributes}
+    collapsed_attr_cols = set(
+        degenerate_attribute_columns(best.degeneracy_flags, attr_names, kinds=frozenset({"collapsed"}))
+    )
+    collapsed = [
+        f
+        for f in best.degeneracy_flags
+        if f.get("kind") == "collapsed" and f.get("column") not in collapsed_attr_cols
+    ]
     if collapsed:
         cols = ", ".join(f.get("column", "?") for f in collapsed)
         reasons.append(

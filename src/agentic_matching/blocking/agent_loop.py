@@ -32,6 +32,7 @@ from agentic_matching.config import (
     OFF_PARQUET,
     OFF_SEARCH_TEXT_PARQUET,
     agent_loop_settings,
+    round_temperature,
 )
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_blocking_prompt
@@ -291,15 +292,17 @@ def run_blocking_agent(
             notes=notes,
             linking_feedback=linking_feedback,
         )
+        temperature = round_temperature(round_idx, has_prior_state=prev_rule is not None)
         log.info(
-            "block '%s' round %d: asking the LLM to %s the blocking rule -- this is "
-            "the slow step, everything else in this loop finishes in seconds.",
+            "block '%s' round %d: asking the LLM to %s the blocking rule (temperature=%.2f) "
+            "-- this is the slow step, everything else in this loop finishes in seconds.",
             block_name,
             round_idx,
             "propose" if round_idx == 0 else "revise",
+            temperature,
         )
         try:
-            response = client.complete_json(sys_p, user_p)
+            response = client.complete_json(sys_p, user_p, temperature=temperature)
             rule = {"fndds": response["fndds"], "off": response["off"]}
         except Exception:
             # A real LLM backend can fail a round outright (e.g. a reasoning model
@@ -322,6 +325,24 @@ def run_blocking_agent(
 
         metrics = evaluate_rule(block_name, rule)
         rounds.append(BlockingRound(round=round_idx, rule=rule, metrics=metrics, rationale=rationale))
+        # Concise, always-INFO summary of what this round actually selected -- distinct
+        # from the full prompt/response dump at DEBUG (see llm/client.py) and from
+        # _write_artifact's full-fidelity JSON below: this is the one line to scan when
+        # skimming a run's log to see how the rule evolved round over round without
+        # opening every artifact file.
+        log.info(
+            "block '%s' round %d selected blocking rule: "
+            "fndds keywords=%s categories=%s exclude_keywords=%s | "
+            "off keywords=%s categories=%s exclude_keywords=%s",
+            block_name,
+            round_idx,
+            rule["fndds"].get("keywords"),
+            rule["fndds"].get("categories"),
+            rule["fndds"].get("exclude_keywords"),
+            rule["off"].get("keywords"),
+            rule["off"].get("categories"),
+            rule["off"].get("exclude_keywords"),
+        )
         _write_artifact(block_name, rounds[-1])
 
         if _stabilized(prev_metrics, metrics):

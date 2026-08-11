@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from agentic_matching.attributes.agent_loop import (
@@ -30,9 +30,13 @@ from agentic_matching.attributes.agent_loop import (
 from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.rules import filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
-from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
+from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings, round_temperature
 from agentic_matching.linking import splink_model
-from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings
+from agentic_matching.linking.degeneracy_check import (
+    check_degeneracy,
+    degenerate_attribute_columns,
+    export_trained_settings,
+)
 from agentic_matching.linking.evaluate import (
     attribute_discriminative_power,
     best_match_per_off,
@@ -67,6 +71,12 @@ class LinkingRound:
     rationale: str
     matches_csv: str
     final_matches_csv: str
+    # Attribute names proactively dropped *before* this round's training because their
+    # own comparison was degenerate (collapsed/label_switching/untrained) in a prior
+    # same-round attempt -- see degenerate_attribute_columns and the retrain loop in
+    # run_linking_agent. Empty for a round that never needed this. Kept on the record
+    # (not just logged) so it's visible in the artifact JSON without needing to grep logs.
+    dropped_attributes: list[str] = field(default_factory=list)
 
 
 def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
@@ -102,6 +112,108 @@ def select_best_round(rounds: list[LinkingRound]) -> LinkingRound:
     return max(rounds, key=_score)
 
 
+def _train_and_evaluate_round(
+    block_name: str, round_idx: int, attrs: list[dict[str, Any]]
+) -> tuple[LinkingRound, list[dict[str, Any]], Any, Any]:
+    """Train + evaluate one round with the given attribute set, writing this round's
+    matches CSV / final_matches CSV as a side effect. Returns the round record, the
+    attribute set actually used (build_linker may drop attributes that turned out
+    unobservable on one side -- see splink_model._drop_unobservable_attrs), and the
+    prepared fndds/off frames (needed by the caller's correlation check on the way to
+    building the next round's revision prompt).
+
+    Called more than once for the same `round_idx` when run_linking_agent's retrain
+    loop (see its docstring) proactively drops a degenerate attribute -- each call
+    fully overwrites that round's matches/final_matches CSVs with the latest retrain,
+    so what's on disk always reflects the attribute set that was actually kept, never
+    a stale attempt that included an attribute since dropped.
+    """
+    log.info("=== linking round %d for block '%s': training ===", round_idx, block_name)
+    # build_linker may drop attributes that turned out unobservable on one side --
+    # reassign `attrs` to what it actually returns so every downstream use this round
+    # (train, holdout scoring, CSV export, the artifact, next round's LLM prompt) stays
+    # consistent with what the trained linker's settings actually contain.
+    linker, fndds_df, off_df, attrs = splink_model.build_linker(block_name, attrs)
+    # Concise, always-INFO summary of what this round is actually training with --
+    # distinct from the full prompt/response dump at DEBUG (see llm/client.py) and from
+    # _write_artifact's full-fidelity JSON below: this is the one line to scan when
+    # skimming a run's log to see how the attribute set evolved round over round
+    # without opening every artifact file. Reflects what build_linker actually kept,
+    # not just what was proposed, so it's never misleading about what got trained.
+    log.info(
+        "block '%s' round %d selected linking attributes: %s",
+        block_name,
+        round_idx,
+        [f"{a['name']} ({a['kind']})" for a in attrs],
+    )
+    splink_model.train(linker, attrs)
+
+    trained_settings = export_trained_settings(linker)
+    degeneracy_flags = check_degeneracy(trained_settings)
+
+    predictions = splink_model.predict(linker, threshold=0.5)
+    plausibility = plausibility_report(predictions)
+    holdout_eval = score_against_holdout(block_name, attrs, trained_settings)
+    # Pure value-agreement comparison against the same calibration holdout, not a
+    # model prediction -- cheap enough to compute every round regardless of block
+    # size (see its docstring for why this is a different, complementary signal to
+    # both holdout_eval's aggregate f1 and correlation_flags below).
+    discriminative_power = attribute_discriminative_power(block_name, attrs)
+    # Concrete wrong pairs, not just aggregate numbers -- see its docstring for why
+    # this is what actually lets the revision LLM (below) reason about what NEW
+    # attribute would fix a real mistake, not just which existing ones are weak.
+    error_examples = holdout_error_examples(block_name, attrs, trained_settings)
+
+    # Exported separately from `predictions` (not gated on the 0.5 "confident
+    # match" threshold above): the CSV is a review artifact, not a decision, so it
+    # should always show the best available candidates -- confidence is conveyed by
+    # the match_probability column itself, not a hard cutoff. Otherwise a weak
+    # block/attribute combination can produce an empty, unhelpful file even when
+    # real (if unconfident) candidates exist -- verified case: yogurt's
+    # threshold=0.5 predictions were empty despite 304K real candidate pairs
+    # topping out at match_probability 0.21. export_predictions_csv's own
+    # `top_n` cap (default 5000) keeps the file a manageable size regardless.
+    all_predictions = splink_model.predict(linker, threshold=0.0)
+    matches_csv_path = ARTIFACTS_DIR / f"matches_{block_name}_round{round_idx}.csv"
+    n_written = export_predictions_csv(all_predictions, attrs, matches_csv_path)
+    log.info(
+        "Wrote %s (top %d of %d candidate pairs by match_probability)",
+        matches_csv_path,
+        n_written,
+        len(all_predictions),
+    )
+
+    # The actual deliverable (see this module's docstring): one best FNDDS record
+    # per OFF/commercial-product record, not every candidate. No round number --
+    # always reflects this (latest) round, so a downstream consumer always reads
+    # the current best output without needing to know which round number "won".
+    final_matches = best_match_per_off(all_predictions)
+    final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
+    n_final_written = export_predictions_csv(final_matches, attrs, final_matches_csv_path, top_n=None)
+    log.info(
+        "Wrote %s (%d OFF records, each with its single best FNDDS match)",
+        final_matches_csv_path,
+        n_final_written,
+    )
+
+    rationale = f"round {round_idx} trained with {len(attrs)} attributes"
+    round_obj = LinkingRound(
+        round=round_idx,
+        attributes=attrs,
+        degeneracy_flags=degeneracy_flags,
+        holdout_evaluation=holdout_eval,
+        attribute_discriminative_power=discriminative_power,
+        holdout_error_examples=error_examples,
+        plausibility=plausibility,
+        n_candidate_pairs=len(all_predictions),
+        n_final_matches=n_final_written,
+        rationale=rationale,
+        matches_csv=str(matches_csv_path),
+        final_matches_csv=str(final_matches_csv_path),
+    )
+    return round_obj, attrs, fndds_df, off_df
+
+
 def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list[LinkingRound]:
     client = client or get_llm_client()
     attrs = load_latest_attributes(block_name)
@@ -120,84 +232,63 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
 
     rounds: list[LinkingRound] = []
     prev_f1: float | None = None
+    # Names dropped by the retrain-on-collapse loop below, across all rounds so far --
+    # echoed to the revision LLM (via the evaluation payload) so it doesn't propose the
+    # exact same non-discriminating attribute right back, and also used to filter its
+    # response defensively in case it does anyway.
+    auto_dropped: list[str] = []
 
     for round_idx in range(agent_loop_settings.max_rounds):
-        log.info("=== linking round %d for block '%s': training ===", round_idx, block_name)
-        # build_linker may drop attributes that turned out unobservable on one side
-        # (see splink_model._drop_unobservable_attrs) -- reassign `attrs` to what it
-        # actually returns so every downstream use this round (train, holdout scoring,
-        # CSV export, the artifact, next round's LLM prompt) stays consistent with what
-        # the trained linker's settings actually contain.
-        linker, fndds_df, off_df, attrs = splink_model.build_linker(block_name, attrs)
-        splink_model.train(linker, attrs)
-
-        trained_settings = export_trained_settings(linker)
-        degeneracy_flags = check_degeneracy(trained_settings)
-
-        predictions = splink_model.predict(linker, threshold=0.5)
-        plausibility = plausibility_report(predictions)
-        holdout_eval = score_against_holdout(block_name, attrs, trained_settings)
-        # Pure value-agreement comparison against the same calibration holdout, not a
-        # model prediction -- cheap enough to compute every round regardless of block
-        # size (see its docstring for why this is a different, complementary signal to
-        # both holdout_eval's aggregate f1 and correlation_flags below).
-        discriminative_power = attribute_discriminative_power(block_name, attrs)
-        # Concrete wrong pairs, not just aggregate numbers -- see its docstring for why
-        # this is what actually lets the revision LLM (below) reason about what NEW
-        # attribute would fix a real mistake, not just which existing ones are weak.
-        error_examples = holdout_error_examples(block_name, attrs, trained_settings)
-
-        # Exported separately from `predictions` (not gated on the 0.5 "confident
-        # match" threshold above): the CSV is a review artifact, not a decision, so it
-        # should always show the best available candidates -- confidence is conveyed by
-        # the match_probability column itself, not a hard cutoff. Otherwise a weak
-        # block/attribute combination can produce an empty, unhelpful file even when
-        # real (if unconfident) candidates exist -- verified case: yogurt's
-        # threshold=0.5 predictions were empty despite 304K real candidate pairs
-        # topping out at match_probability 0.21. export_predictions_csv's own
-        # `top_n` cap (default 5000) keeps the file a manageable size regardless.
-        all_predictions = splink_model.predict(linker, threshold=0.0)
-        matches_csv_path = ARTIFACTS_DIR / f"matches_{block_name}_round{round_idx}.csv"
-        n_written = export_predictions_csv(all_predictions, attrs, matches_csv_path)
-        log.info(
-            "Wrote %s (top %d of %d candidate pairs by match_probability)",
-            matches_csv_path,
-            n_written,
-            len(all_predictions),
-        )
-
-        # The actual deliverable (see this module's docstring): one best FNDDS record
-        # per OFF/commercial-product record, not every candidate. No round number --
-        # always reflects this (latest) round, so a downstream consumer always reads
-        # the current best output without needing to know which round number "won".
-        final_matches = best_match_per_off(all_predictions)
-        final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
-        n_final_written = export_predictions_csv(final_matches, attrs, final_matches_csv_path, top_n=None)
-        log.info(
-            "Wrote %s (%d OFF records, each with its single best FNDDS match)",
-            final_matches_csv_path,
-            n_final_written,
-        )
-
-        rationale = f"round {round_idx} trained with {len(attrs)} attributes"
-        rounds.append(
-            LinkingRound(
-                round=round_idx,
-                attributes=attrs,
-                degeneracy_flags=degeneracy_flags,
-                holdout_evaluation=holdout_eval,
-                attribute_discriminative_power=discriminative_power,
-                holdout_error_examples=error_examples,
-                plausibility=plausibility,
-                n_candidate_pairs=len(all_predictions),
-                n_final_matches=n_final_written,
-                rationale=rationale,
-                matches_csv=str(matches_csv_path),
-                final_matches_csv=str(final_matches_csv_path),
+        round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+        # Proactively drop any attribute whose OWN comparison is degenerate
+        # (collapsed/label_switching/untrained -- see degenerate_attribute_columns's
+        # docstring for why all three mean "no usable signal" for an attribute
+        # comparison specifically) in this round's trained model, then retrain the
+        # SAME round without it -- rather than only handing it to the LLM as feedback
+        # and hoping a future revision notices. Real cases this fixes (beans,
+        # LLM_DEVICE=ollama/databricks): `beans_is_bean_dip` stayed collapsed through 6
+        # rounds of attribute revision, and `beans_preparation_method` showed
+        # label_switching in EVERY round of the block's entire history (true pairs
+        # agreed on it 0% of the time vs 0.2% for random decoy pairs -- see
+        # attribute_discriminative_power) -- in both cases the LLM kept revising other
+        # attributes instead of ever dropping the broken one, and the outer loop then
+        # misdiagnosed the survivor as a blocking problem. Looped (not a single pass)
+        # since dropping one attribute can occasionally unmask another; bounded
+        # naturally because `attrs` strictly shrinks each pass.
+        dropped_this_round: list[str] = []
+        while attrs:
+            degenerate = degenerate_attribute_columns(round_result.degeneracy_flags, {a["name"] for a in attrs})
+            if not degenerate:
+                break
+            kinds_by_name = {
+                f["column"]: f["kind"] for f in round_result.degeneracy_flags if f.get("column") in degenerate
+            }
+            log.warning(
+                "block '%s' round %d: proactively dropping attribute(s) %s -- "
+                "degeneracy flag(s) %s in this round's own trained model (see "
+                "degenerate_attribute_columns's docstring for what each flag kind "
+                "means for an attribute comparison); retraining round %d without them "
+                "instead of waiting on attribute revision to notice.",
+                block_name,
+                round_idx,
+                degenerate,
+                kinds_by_name,
+                round_idx,
             )
-        )
+            dropped_this_round.extend(degenerate)
+            attrs = [a for a in attrs if a["name"] not in degenerate]
+            round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+        if dropped_this_round:
+            round_result.dropped_attributes = dropped_this_round
+            auto_dropped.extend(dropped_this_round)
+
+        rounds.append(round_result)
         _write_artifact(block_name, rounds[-1])
 
+        degeneracy_flags = round_result.degeneracy_flags
+        holdout_eval = round_result.holdout_evaluation
+        discriminative_power = round_result.attribute_discriminative_power
+        error_examples = round_result.holdout_error_examples
         cur_f1 = holdout_eval.get("f1")
         log.info(
             "block=%s round=%d degeneracy_flags=%d holdout_precision=%s holdout_recall=%s holdout_f1=%s",
@@ -221,30 +312,46 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         # (computed once, above), not just correlation/evaluation numbers in isolation.
         values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), off_df)
         correlation_flags = check_correlations(values_df)
+        evaluation: dict[str, Any] = {
+            **holdout_eval,
+            "degeneracy_flags": degeneracy_flags,
+            "attribute_discriminative_power": discriminative_power,
+            **error_examples,
+        }
+        if auto_dropped:
+            evaluation["auto_dropped_attributes"] = (
+                "These attribute names were already tried and proactively removed (not "
+                "by you) because their comparison showed zero discriminating power in a "
+                "trained model: " + ", ".join(auto_dropped) + ". Don't propose them again "
+                "with the same definition."
+            )
         sys_p, user_p = build_attribute_prompt(
             block_name,
             sample_pairs=sample_pairs,
             existing_attributes=attrs,
             correlation_flags=correlation_flags or None,
-            evaluation={
-                **holdout_eval,
-                "degeneracy_flags": degeneracy_flags,
-                "attribute_discriminative_power": discriminative_power,
-                **error_examples,
-            },
+            evaluation=evaluation,
             field_stats=field_stats,
             candidate_terms=candidate_terms,
             guidance=get_seed_attribute_notes(block_name),
         )
+        # has_prior_state=True unconditionally -- unlike blocking/attributes' round 0,
+        # this loop never lacks prior state: it always starts from an already-persisted
+        # attribute set (see load_latest_attributes above), so every round here has
+        # real evidence/an existing set to stay faithful to, never a from-scratch
+        # "exploration" call.
+        temperature = round_temperature(round_idx, has_prior_state=True)
         log.info(
             "block '%s' round %d: asking the LLM to revise matching attributes based "
-            "on this round's linking results -- this is the slow step, everything "
-            "else in this loop (splink training, scoring) finishes in seconds.",
+            "on this round's linking results (temperature=%.2f) -- this is the slow "
+            "step, everything else in this loop (splink training, scoring) finishes "
+            "in seconds.",
             block_name,
             round_idx,
+            temperature,
         )
         try:
-            response = client.complete_json(sys_p, user_p)
+            response = client.complete_json(sys_p, user_p, temperature=temperature)
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: this round's own
             # training/evaluation already succeeded and is already appended to `rounds`
@@ -258,6 +365,22 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             )
             break
         new_attrs = filter_valid_attributes(response["attributes"])
+        if auto_dropped:
+            # Defensive backstop against the LLM re-proposing an attribute already
+            # proven non-discriminating this run, despite the evaluation payload
+            # telling it not to (see `auto_dropped_attributes` above) -- the retrain
+            # loop next round would just drop it again anyway, so save that wasted
+            # round here instead.
+            reintroduced = [a["name"] for a in new_attrs if a["name"] in auto_dropped]
+            if reintroduced:
+                log.warning(
+                    "block '%s' round %d: LLM re-proposed already-dropped attribute(s) "
+                    "%s despite being told not to; filtering them out again.",
+                    block_name,
+                    round_idx,
+                    reintroduced,
+                )
+                new_attrs = [a for a in new_attrs if a["name"] not in auto_dropped]
         if {a["name"] for a in new_attrs} == {a["name"] for a in attrs}:
             log.info("LLM proposed no attribute changes for '%s'; stopping.", block_name)
             attrs = new_attrs
