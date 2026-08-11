@@ -12,7 +12,18 @@ uv sync
 cp .env.example .env   # adjust if needed; sane CPU defaults are baked in
 ```
 
-Requires `data/food.parquet` (Open Food Facts) to already be present.
+Requires `data/food.parquet` (Open Food Facts) to already be present — it isn't
+fetched by any script here, so download it once yourself:
+
+```bash
+curl -L -o data/food.parquet \
+  https://huggingface.co/datasets/openfoodfacts/product-database/resolve/main/food.parquet
+```
+
+This is Open Food Facts' full product export in parquet form (~7.7GB), so the
+download takes a while; get the latest version straight from the
+[Hugging Face dataset page](https://huggingface.co/datasets/openfoodfacts/product-database)
+if this URL ever moves.
 
 ## Pipeline
 
