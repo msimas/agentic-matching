@@ -1,7 +1,7 @@
 """A blocking rule is a keyword-inclusion / keyword-exclusion predicate over a side's
-text, optionally OR'd with a structured-category membership predicate (see
-llm/prompts.py's blocking schema). This module turns a rule dict into SQL predicates
-and applies it against FNDDS / OFF.
+text, AND'd with a structured-category membership predicate when the rule specifies
+one (see llm/prompts.py's blocking schema). This module turns a rule dict into SQL
+predicates and applies it against FNDDS / OFF.
 
 Free-text keyword matching alone is fragile: FNDDS's `additional_description` field is
 full of boilerplate variant-annotations ("all flavors", "multigrain, whole grain, whole
@@ -11,8 +11,19 @@ other foods' own descriptions too (fruit salad, whole wheat muffins, plain pretz
 Both FNDDS (WWEIA food category) and OFF (categories_tags) carry clean, human-curated
 categorical labels that don't have this problem -- a categorical membership check
 (exact match / tag containment) is far more precise than a keyword guess when a
-relevant category exists, so a rule can specify "categories" as an alternative
-membership signal, OR'd with the keyword predicate.
+relevant category exists, so a rule can specify "categories" as a second membership
+signal.
+
+POC note: keywords and categories are AND'd (both must match when both are given),
+not OR'd -- deliberately strict, at the real cost of dropping any record with no
+category tags at all (~60% of the OFF catalog overall, verified; category coverage
+this sparse is specific to OFF's crowd-sourced tagging). This project's target
+deployment is a proprietary retail catalog (Circana, per PLAN.md) where product
+categorization is expected to be far more complete/reliable than OFF's -- there,
+requiring both signals to agree is a real precision win, not just a recall cost
+against a demo dataset, so blocking rules are being developed toward that assumption
+now rather than worked around for OFF's specific sparsity. See README's "Known
+constraints" section for the concrete verified numbers this was checked against.
 """
 
 from __future__ import annotations
@@ -66,7 +77,15 @@ def _side_predicate_sql(
     if not clauses:
         return "FALSE"
 
-    sql = "(" + " OR ".join(clauses) + ")"
+    # AND, not OR -- see this module's docstring ("POC note") for why: when both a
+    # keyword and a category clause are present, a record must satisfy both to be
+    # in-block. A record with no category value at all (NULL/empty categories_tags)
+    # can never satisfy the category clause, so this also means such a record is
+    # excluded outright once a rule specifies categories, regardless of how well its
+    # text matches -- a deliberate, real recall cost on OFF's sparse category data,
+    # accepted for the precision win this is expected to give on a real deployment's
+    # more complete catalog.
+    sql = "(" + " AND ".join(clauses) + ")"
     if excludes:
         exclude = " OR ".join(f"{text_col} LIKE '%{kw}%'" for kw in excludes)
         sql = f"({sql} AND NOT ({exclude}))"

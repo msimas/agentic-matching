@@ -2,7 +2,7 @@
   {
     "name": "beans_bean_type",
     "kind": "categorical",
-    "description": "Specific type of bean involved (e.g., kidney, pinto, black, green, etc.)",
+    "description": "The specific type of bean involved (kidney, pinto, black, lima, etc.).",
     "categories": {
       "kidney": {
         "fndds_keywords": [
@@ -10,7 +10,8 @@
         ],
         "off_keywords": [
           "kidney",
-          "haricot"
+          "haricots rouges",
+          "alubias rojas"
         ]
       },
       "pinto": {
@@ -19,7 +20,7 @@
         ],
         "off_keywords": [
           "pinto",
-          "pinto bean"
+          "feijao"
         ]
       },
       "black": {
@@ -27,36 +28,28 @@
           "black"
         ],
         "off_keywords": [
-          "black"
+          "black",
+          "haricots noirs",
+          "la preferida"
         ]
       },
-      "green": {
+      "lima": {
         "fndds_keywords": [
-          "green",
-          "string"
+          "lima"
         ],
         "off_keywords": [
-          "green",
-          "haricots verts"
+          "lima"
         ]
       },
       "white": {
         "fndds_keywords": [
-          "white"
+          "white",
+          "navy"
         ],
         "off_keywords": [
-          "white"
-        ]
-      },
-      "garbanzo": {
-        "fndds_keywords": [
-          "garbanzo",
-          "chickpea"
-        ],
-        "off_keywords": [
-          "garbanzo",
-          "chickpea",
-          "chickpeas"
+          "white",
+          "haricots blancs",
+          "alubia blanca"
         ]
       },
       "fava": {
@@ -69,16 +62,14 @@
       },
       "other": {
         "fndds_keywords": [
-          "beans",
           "bean",
-          "legume",
-          "lentil"
+          "beans"
         ],
         "off_keywords": [
-          "beans",
-          "bean",
-          "legume",
-          "lentil"
+          "haricots",
+          "feijoas",
+          "legumes",
+          "alubias"
         ]
       }
     }
@@ -86,7 +77,7 @@
   {
     "name": "beans_preparation_method",
     "kind": "categorical",
-    "description": "How the beans are prepared (canned, dried, frozen, etc.)",
+    "description": "How the beans were prepared (canned, dried, frozen, etc.).",
     "categories": {
       "canned": {
         "fndds_keywords": [
@@ -103,7 +94,7 @@
         ],
         "off_keywords": [
           "dried",
-          "seul"
+          "seco"
         ]
       },
       "frozen": {
@@ -111,27 +102,18 @@
           "frozen"
         ],
         "off_keywords": [
-          "frozen",
-          "glac\u00e9"
-        ]
-      },
-      "cooked": {
-        "fndds_keywords": [
-          "cooked"
-        ],
-        "off_keywords": [
-          "cooked",
-          "cuit"
+          "frozen"
         ]
       },
       "other": {
         "fndds_keywords": [
-          "baked",
-          "roasted",
-          "steamed"
+          "cooked",
+          "restaurant",
+          "fast food"
         ],
         "off_keywords": [
-          "fresh"
+          "cooked",
+          "preparado"
         ]
       }
     }
@@ -139,92 +121,46 @@
   {
     "name": "beans_contains_meat",
     "kind": "boolean",
-    "description": "Indicates if the product contains meat (e.g., pork and beans).",
+    "description": "Indicates whether the product contains meat (e.g., 'pork and beans').",
     "fndds_keywords": [
       "meat",
       "pork",
       "bacon",
       "ham",
       "sausage",
-      "frank"
+      "frankfurter"
     ],
     "off_keywords": [
+      "meat",
       "pork",
       "bacon",
       "ham",
       "sausage",
-      "frankfurter",
-      "beef"
+      "frank",
+      "pork and beans"
     ]
   },
   {
-    "name": "beans_is_part_of_mexican_dish",
+    "name": "beans_is_refried",
     "kind": "boolean",
-    "description": "Indicates if the product is part of a Mexican dish (e.g., burrito, taco, nacho).",
+    "description": "Indicates whether the product is refried beans.",
     "fndds_keywords": [
-      "burrito",
-      "taco",
-      "nacho",
-      "mexican"
+      "refried"
     ],
     "off_keywords": [
-      "burrito",
-      "taco",
-      "nachos",
-      "mexican"
+      "refried"
     ]
   },
   {
-    "name": "beans_is_dessert",
+    "name": "beans_is_reduced_sodium",
     "kind": "boolean",
-    "description": "Indicates if the product is a dessert (e.g., bean cake).",
+    "description": "Indicates whether the product is reduced sodium.",
     "fndds_keywords": [
-      "cake"
+      "reduced sodium"
     ],
     "off_keywords": [
-      "cake",
-      "jam",
-      "jelly"
-    ]
-  },
-  {
-    "name": "beans_is_soup",
-    "kind": "boolean",
-    "description": "Indicates if the product is a soup.",
-    "fndds_keywords": [
-      "soup",
-      "stew"
-    ],
-    "off_keywords": [
-      "soup",
-      "stew"
-    ]
-  },
-  {
-    "name": "beans_is_side_dish",
-    "kind": "boolean",
-    "description": "Indicates if the product is a side dish.",
-    "fndds_keywords": [
-      "side",
-      "salad"
-    ],
-    "off_keywords": [
-      "side",
-      "salad"
-    ]
-  },
-  {
-    "name": "beans_is_flavored",
-    "kind": "boolean",
-    "description": "Indicates if the beans are flavored (e.g., chili, curry).",
-    "fndds_keywords": [
-      "chili",
-      "curry",
-      "spiced"
-    ],
-    "off_keywords": [
-      "spiced",
-      "flavored"
+      "reduced sodium",
+      "low sodium"
     ]
   }
 ]

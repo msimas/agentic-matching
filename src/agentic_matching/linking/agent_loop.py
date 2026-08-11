@@ -45,6 +45,7 @@ from agentic_matching.linking.evaluate import (
     plausibility_report,
     score_against_holdout,
 )
+from agentic_matching.linking.nutrition_priors import apply_nutrition_priors
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_attribute_prompt
 
@@ -148,17 +149,30 @@ def _train_and_evaluate_round(
     )
     splink_model.train(linker, attrs)
 
-    trained_settings = export_trained_settings(linker)
+    raw_trained_settings = export_trained_settings(linker)
+    # Pure value-agreement comparison against the same calibration holdout, not a
+    # model prediction -- cheap enough to compute every round regardless of block
+    # size (see its docstring for why this is a different, complementary signal to
+    # both holdout_eval's aggregate f1 and correlation_flags below). Computed here,
+    # before the nutrition-prior blend below, because apply_nutrition_priors needs
+    # each attribute's n_true_pairs to weight how much its EM estimate vs. the domain
+    # prior gets trusted -- see nutrition_priors.py's docstring.
+    discriminative_power = attribute_discriminative_power(block_name, attrs)
+    # A nutrition-significant attribute (meat/dairy/egg/sugar/molasses -- see
+    # nutrition_priors.py) has its EM-trained m/u blended toward a domain prior
+    # rather than trusted as-is; every other comparison passes through unchanged.
+    # This is a NEW settings dict -- rebuild the linker from it so every downstream
+    # prediction/degeneracy check reflects the actual, possibly-adjusted weights,
+    # not EM's untouched estimate.
+    trained_settings = apply_nutrition_priors(raw_trained_settings, attrs, discriminative_power)
+    if trained_settings != raw_trained_settings:
+        linker = splink_model.linker_from_settings(fndds_df, off_df, trained_settings)
+
     degeneracy_flags = check_degeneracy(trained_settings)
 
     predictions = splink_model.predict(linker, threshold=0.5)
     plausibility = plausibility_report(predictions)
     holdout_eval = score_against_holdout(block_name, attrs, trained_settings)
-    # Pure value-agreement comparison against the same calibration holdout, not a
-    # model prediction -- cheap enough to compute every round regardless of block
-    # size (see its docstring for why this is a different, complementary signal to
-    # both holdout_eval's aggregate f1 and correlation_flags below).
-    discriminative_power = attribute_discriminative_power(block_name, attrs)
     # Concrete wrong pairs, not just aggregate numbers -- see its docstring for why
     # this is what actually lets the revision LLM (below) reason about what NEW
     # attribute would fix a real mistake, not just which existing ones are weak.
@@ -342,10 +356,8 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         # "exploration" call.
         temperature = round_temperature(round_idx, has_prior_state=True)
         log.info(
-            "block '%s' round %d: asking the LLM to revise matching attributes based "
-            "on this round's linking results (temperature=%.2f) -- this is the slow "
-            "step, everything else in this loop (splink training, scoring) finishes "
-            "in seconds.",
+            "Linking and revising matching attributes for block '%s' round %d: asking the LLM to revise matching attributes based "
+            "on this round's linking results (temperature=%.2f).",
             block_name,
             round_idx,
             temperature,

@@ -46,6 +46,29 @@ def _load_block_holdout(block_name: str) -> pd.DataFrame:
     # SME-authored source of this domain knowledge (see blocking/seed_rules.py) -- if
     # one exists for this block; blocks with no seed rule get no extra exclusion here,
     # same as before this fix.
+    #
+    # TODO: a block with no seed_rules.json entry (or a seed whose excludes just
+    # haven't caught up with what the block's actual rule has since learned) silently
+    # gets LESS exclusion than its real, currently-materialized blocking rule would
+    # apply -- verified real case: `beans` had no seed entry at all until one was
+    # added retroactively (see seed_rules.json's own exclude_keywords_rationale for
+    # beans' off-side), and even that seed initially missed 'jelly'/'vanilla bean'/
+    # 'protein powder'/'crisps' (162 jelly-bean-candy holdout rows slipped through
+    # unexcluded, verified by querying data/calibration/holdout.parquet directly)
+    # because those excludes only existed in a real round's LEARNED rule
+    # (data/artifacts/blocking_beans_round1.json), not in the static seed file. A more
+    # systemic fix would draw excludes from the block's actual current/best rule
+    # instead of (or in addition to) the seed -- deliberately not done yet: that
+    # rule is itself LLM-proposed, so using it here to define the ground truth the
+    # same LLM's attribute revisions get scored against risks a milder version of the
+    # exact circularity `term_predicate_sql`'s docstring already avoids on the
+    # inclusion side (an overly aggressive learned exclude list could shrink the
+    # holdout toward the easier cases the current attributes already handle well,
+    # quietly inflating holdout f1 with the model's own choices). Needs a persisted
+    # canonical "final rule" artifact for blocking (blocking/agent_loop.py doesn't
+    # write one today, unlike attributes/generated/<block>/latest.json) before this
+    # is even possible, plus a real answer to the circularity question above -- see
+    # README.md's "Known constraints" section for the fuller writeup.
     seed_rule = get_seed_rule(block_name) or {}
     excludes = combined_exclude_keywords(seed_rule)
     branded_exclude_pred = exclude_predicate_sql("lower(coalesce(branded_food_category, ''))", excludes)

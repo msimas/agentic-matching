@@ -236,9 +236,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
         )
         temperature = round_temperature(round_idx, has_prior_state=existing is not None)
         log.info(
-            "block '%s' round %d: asking the LLM to %s matching attributes "
-            "(temperature=%.2f) -- this is the slow step, everything else in this "
-            "loop finishes in seconds.",
+            "Generating matching attributes for '%s' round %d: asking the LLM to %s matching attributes (temperature=%.2f)",
             block_name,
             round_idx,
             "propose" if round_idx == 0 else "revise",

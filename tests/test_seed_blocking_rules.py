@@ -90,12 +90,26 @@ def test_off_category_no_match():
     assert not _category_member(rule, "off", ["en:snacks", "en:sweet-snacks"])
 
 
-def test_category_or_keyword_either_matches():
+def test_category_and_keyword_both_required():
+    # POC change: keywords and categories are AND'd, not OR'd, when both are given
+    # (see rules.py's module docstring for why) -- a record needs both to be in-block.
     rule = {"fndds": {"keywords": ["yogurt"], "categories": ["Yogurt, regular"]}}
-    # Matches via category even though the keyword wouldn't match this description.
-    assert _category_member(rule, "fndds", "Yogurt, regular", text="Cultured dairy blend")
-    # Matches via keyword even though the category wouldn't match.
-    assert _category_member(rule, "fndds", "Other", text="Yogurt tube")
+    # Category matches but keyword doesn't -> no longer sufficient on its own.
+    assert not _category_member(rule, "fndds", "Yogurt, regular", text="Cultured dairy blend")
+    # Keyword matches but category doesn't -> no longer sufficient on its own.
+    assert not _category_member(rule, "fndds", "Other", text="Yogurt tube")
+    # Both match -> in-block.
+    assert _category_member(rule, "fndds", "Yogurt, regular", text="Yogurt tube")
+
+
+def test_missing_category_value_excludes_despite_keyword_match():
+    # The concrete motivating case: a record with NO category value at all (NULL,
+    # common on the OFF side -- verified ~60% of the OFF catalog overall, see
+    # README's "Known constraints") can never satisfy the category clause, so once a
+    # rule specifies categories, such a record is excluded even if its text is an
+    # unambiguous keyword match.
+    rule = {"off": {"keywords": ["bean"], "categories": ["en:canned-common-beans"]}}
+    assert not _category_member(rule, "off", None, text="Cannellini beans")
 
 
 def test_exclude_keyword_overrides_category_match():

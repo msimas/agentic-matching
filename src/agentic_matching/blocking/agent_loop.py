@@ -74,7 +74,7 @@ def _sample_texts(con: duckdb.DuckDBPyConnection, block_name: str, n: int = 40) 
 
 
 def _category_options(
-    con: duckdb.DuckDBPyConnection, block_name: str, k: int = 15, min_specificity: float = 0.2
+    con: duckdb.DuckDBPyConnection, block_name: str, k: int = 25, min_specificity: float = 0.2
 ) -> dict[str, list[dict[str, Any]]]:
     """Real category values seen among records already plausibly in this block (same
     seed-term-filtered population `_sample_texts` draws from), with their counts --
@@ -82,6 +82,14 @@ def _category_options(
     (see rules.py) instead of relying solely on free-text keywords, which is far more
     precise when a clean matching category exists (e.g. FNDDS's WWEIA "Yogurt, regular"
     / "Yogurt, Greek" categories, OFF's "en:yogurts" tag).
+
+    `k` was 15; bumped to 25 after keywords/categories became AND'd rather than OR'd
+    (see rules.py's module docstring) -- a low-volume-but-specific category can matter
+    more now (missing it drops every record tagged with only that category, not just
+    narrows an alternative match path), and a real case was cut off purely by the old
+    limit: verified against 'beans', `en:cannellini-beans` (specificity 0.7, well
+    above min_specificity) ranked 16th by within-block count and was invisible to the
+    LLM under k=15.
 
     Filters out categories below `min_specificity` -- the fraction of the category's
     *entire catalog-wide* membership that also plausibly belongs to this block (matches
@@ -294,8 +302,7 @@ def run_blocking_agent(
         )
         temperature = round_temperature(round_idx, has_prior_state=prev_rule is not None)
         log.info(
-            "block '%s' round %d: asking the LLM to %s the blocking rule (temperature=%.2f) "
-            "-- this is the slow step, everything else in this loop finishes in seconds.",
+            "Generating blocking attributes for '%s' round %d: asking the LLM to %s the blocking rule (temperature=%.2f)",
             block_name,
             round_idx,
             "propose" if round_idx == 0 else "revise",

@@ -370,6 +370,33 @@ If `scripts/07_...` still runs long or memory climbs unbounded, stop it and chec
 `data/blocks/<block>_off.parquet` row counts — a much larger OFF-side block than the
 ones checked in here may need tighter blocking before EM.
 
+- **TODO: linking holdout exclusion is seed-rule-only, not rule-actual.**
+  `linking/evaluate.py::_load_block_holdout` filters out known false-positive
+  categories from the calibration holdout using `blocking/seed_rules.json`'s
+  `exclude_keywords` — but a block with no seed entry (or a seed whose excludes
+  haven't caught up with what the block's real, currently-materialized rule has
+  since learned) silently gets less exclusion applied than that rule would give it.
+  Verified real case: `beans` had no seed entry at all for most of this project's
+  history, and 162 real jelly-bean-candy rows (`branded_food_category=Candy`, OFF tag
+  `en:jelly-beans`) polluted its holdout f1/attribute_discriminative_power/
+  holdout_error_examples calculations as a result — fixed for now by adding/
+  extending `beans`' seed entry with the excludes its own round-1 blocking rule had
+  already independently learned (`jelly`, `vanilla bean`, `protein powder`,
+  `crisps`), but this is a per-block patch, not a systemic fix: any future block
+  without a hand-curated seed (or whose seed drifts stale relative to its actual
+  rule) will hit the same silent gap. A more systemic fix — drawing holdout excludes
+  from the block's actual current/best rule instead of (or in addition to) the seed
+  — was deliberately deferred: that rule is itself LLM-proposed, so using it to
+  define the ground truth the same LLM's attribute revisions get scored against
+  risks a milder version of the exact circularity `blocking/metrics.py::
+  term_predicate_sql`'s docstring already avoids on the inclusion side (an overly
+  aggressive learned exclude list could shrink the holdout toward the cases the
+  current attributes already handle well, quietly inflating holdout f1 with the
+  model's own choices). It also needs a persisted canonical "final rule" artifact
+  for blocking, which doesn't exist today (unlike attributes'
+  `generated/<block>/latest.json`) — `blocking/agent_loop.py` picks a final rule
+  in-memory and never writes it out separately from the per-round artifacts.
+
 ## Testing
 
 ```bash

@@ -2,15 +2,16 @@
   {
     "name": "beans_bean_type",
     "kind": "categorical",
-    "description": "The specific type of bean involved (kidney, pinto, black, lima, etc.)",
+    "description": "The specific type of bean involved (kidney, pinto, black, lima, etc.).",
     "categories": {
       "kidney": {
         "fndds_keywords": [
           "kidney"
         ],
         "off_keywords": [
-          "red kidney",
-          "kidney"
+          "kidney",
+          "haricots rouges",
+          "alubias rojas"
         ]
       },
       "pinto": {
@@ -18,7 +19,8 @@
           "pinto"
         ],
         "off_keywords": [
-          "pinto"
+          "pinto",
+          "feijao"
         ]
       },
       "black": {
@@ -26,7 +28,9 @@
           "black"
         ],
         "off_keywords": [
-          "black"
+          "black",
+          "haricots noirs",
+          "la preferida"
         ]
       },
       "lima": {
@@ -37,55 +41,35 @@
           "lima"
         ]
       },
-      "chickpea": {
-        "fndds_keywords": [
-          "chickpeas"
-        ],
-        "off_keywords": [
-          "chickpeas",
-          "garbanzo",
-          "pois-chiche"
-        ]
-      },
-      "navy": {
-        "fndds_keywords": [
-          "navy"
-        ],
-        "off_keywords": [
-          "navy"
-        ]
-      },
       "white": {
         "fndds_keywords": [
           "white",
-          "cannellini"
+          "navy"
         ],
         "off_keywords": [
           "white",
-          "cannellini",
-          "weisse",
-          "witte"
+          "haricots blancs",
+          "alubia blanca"
         ]
       },
-      "green": {
+      "fava": {
         "fndds_keywords": [
-          "green"
+          "fava"
         ],
         "off_keywords": [
-          "green"
+          "fava"
         ]
       },
       "other": {
         "fndds_keywords": [
-          "beans",
           "bean",
-          "peas",
-          "legumes"
+          "beans"
         ],
         "off_keywords": [
-          "beans",
-          "bean",
-          "legumes"
+          "haricots",
+          "feijoas",
+          "legumes",
+          "alubias"
         ]
       }
     }
@@ -93,14 +77,15 @@
   {
     "name": "beans_preparation_method",
     "kind": "categorical",
-    "description": "How the beans are prepared (canned, dried, frozen, etc.)",
+    "description": "How the beans were prepared (canned, dried, frozen, etc.).",
     "categories": {
       "canned": {
         "fndds_keywords": [
           "canned"
         ],
         "off_keywords": [
-          "canned"
+          "canned",
+          "en conserve"
         ]
       },
       "dried": {
@@ -108,7 +93,8 @@
           "dried"
         ],
         "off_keywords": [
-          "dried"
+          "dried",
+          "seco"
         ]
       },
       "frozen": {
@@ -121,12 +107,13 @@
       },
       "other": {
         "fndds_keywords": [
-          "fresh",
-          "cooked"
+          "cooked",
+          "restaurant",
+          "fast food"
         ],
         "off_keywords": [
-          "fresh",
-          "cooked"
+          "cooked",
+          "preparado"
         ]
       }
     }
@@ -134,40 +121,46 @@
   {
     "name": "beans_contains_meat",
     "kind": "boolean",
-    "description": "Indicates whether the product contains meat (pork, beef, chicken, etc.)",
+    "description": "Indicates whether the product contains meat (e.g., 'pork and beans').",
     "fndds_keywords": [
-      "meat"
+      "meat",
+      "pork",
+      "bacon",
+      "ham",
+      "sausage",
+      "frankfurter"
     ],
     "off_keywords": [
+      "meat",
       "pork",
       "bacon",
       "ham",
       "sausage",
       "frank",
-      "beef",
-      "chicken"
+      "pork and beans"
     ]
   },
   {
-    "name": "beans_with_rice",
+    "name": "beans_is_refried",
     "kind": "boolean",
-    "description": "Indicates whether the product includes rice",
+    "description": "Indicates whether the product is refried beans.",
     "fndds_keywords": [
-      "rice"
+      "refried"
     ],
     "off_keywords": [
-      "rice"
+      "refried"
     ]
   },
   {
-    "name": "beans_is_szechuan",
+    "name": "beans_is_reduced_sodium",
     "kind": "boolean",
-    "description": "Indicates if the product is prepared in a Szechuan style",
+    "description": "Indicates whether the product is reduced sodium.",
     "fndds_keywords": [
-      "szechuan"
+      "reduced sodium"
     ],
     "off_keywords": [
-      "szechuan"
+      "reduced sodium",
+      "low sodium"
     ]
   }
 ]

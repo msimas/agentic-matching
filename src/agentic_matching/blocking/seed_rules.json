@@ -3,7 +3,7 @@
     "fndds": {
       "keywords": ["bean"],
       "categories": ["Beans, baked", "Beans, black", "Beans, kidney", "Beans, pinto", "Beans, navy"],
-      "exclude_keywords": ["soybean", "peanut", "coffee"]
+      "exclude_keywords": ["soybean", "peanut", "coffee", "salad", "dip", "rice", "soup", "chili", "lentil", "burrito", "taco"]
     },
     "off": {
       "keywords": ["bean"],
@@ -15,9 +15,10 @@
         "en:pinto-beans",
         "en:baked-beans-in-tomato-sauce"
       ],
-      "exclude_keywords": ["soybean", "peanut", "coffee"]
+      "exclude_keywords": ["soybean", "peanut", "coffee", "jelly", "vanilla bean", "powder", "crisp", "chip", "salad", "dip", "rice", "soup", "chili", "lentil", "burrito", "taco"],
+      "exclude_keywords_rationale": "'jelly'/'vanilla bean'/'protein powder'/'crisps' come from a real materialized round (LLM_DEVICE=databricks) that independently rediscovered these as needed -- verified against the linking-holdout calibration sample (data/calibration/holdout.parquet, term-matched on 'bean' with no exclusion applied): 'jelly' alone catches 162 jelly-bean-candy rows (branded_food_category='Candy', off tag en:jelly-beans) that 'soybean'/'peanut'/'coffee' don't, since 'jelly bean' doesn't contain any of those substrings. This block previously had no seed entry at all (this one was added retroactively, after the fact -- see README.md's 'Known constraints' TODO about _load_block_holdout falling back to seed_rules.json only, not the block's actual current/best rule), so this list may still be incomplete for records outside what's been checked so far."
     },
-    "notes": "this block covers beans in general, not just baked beans. It includes black beans, kidney beans, pinto beans, navy beans, etc. It does not include soybeans (which are a separate block) or peanuts (which are legumes but not beans) or coffe beans. It also does not include mixed bean salads, dips, or rice and bean dishes, which are separate blocks."
+    "notes": "this block covers beans in general, not just canned baked beans but also dried beans. It includes black beans, kidney beans, pinto beans, navy beans, etc. It does not include soybeans (which are a separate block), peanuts (which are legumes but not beans), or coffee beans. It also does not include mixed bean salads, dips, or rice and bean dishes, which are separate blocks. Keywords and categories are now AND'd, not OR'd (a record must satisfy both when a rule specifies categories -- see blocking/rules.py's module docstring), so use MORE of the offered category_options on the OFF side than a narrow rule would need under OR semantics -- every specific bean-type category offered (e.g. en:red-beans, en:refried-beans, en:butter-beans, en:canned-black-beans, en:canned-broad-beans, en:beans) should generally be included alongside the ones already picked, not just the highest-count few, since each category you leave out silently drops every OFF record tagged with only that category from the block regardless of how clearly its product name matches."
   },
   "yogurt": {
     "fndds": {

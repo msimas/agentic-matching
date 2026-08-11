@@ -159,6 +159,17 @@ def build_linker(
     return linker, fndds_df, off_df, attrs
 
 
+def linker_from_settings(fndds_df: pd.DataFrame, off_df: pd.DataFrame, settings: dict[str, Any]) -> Linker:
+    """Build a Linker directly from an already-fully-specified settings dict (e.g. a
+    trained model's exported settings, possibly adjusted -- see linking/
+    nutrition_priors.py::apply_nutrition_priors) rather than from an attrs list +
+    build_comparisons. No EM training is implied or run here; the caller is
+    responsible for the settings already reflecting whatever trained/adjusted state
+    it should. Same construction `evaluate.py::_build_holdout_predictions` already
+    uses for the identical reason (scoring against a settings dict, not retraining)."""
+    return Linker([fndds_df, off_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"])
+
+
 def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
     """Two-pass EM: each pass blocks on a different column so every comparison gets an
     m-probability estimate from at least one pass (a comparison's m can't be estimated
