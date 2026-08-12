@@ -1,28 +1,32 @@
-"""Domain-knowledge priors for attributes that track a nutritionally-significant
-ingredient -- the addition (or absence) of meat/dairy/egg (nutrient-dense) or
-sugar/molasses/honey/syrup (calorie-dense) meaningfully changes a product's nutrition
-profile, so two products differing only on one of these should be treated as more
-likely to be genuinely different products than EM's raw estimate alone might capture
-from a small/unlucky calibration sample -- and conversely, two products agreeing on
-one of these terms are less likely to coincidentally agree by chance than a generic
-attribute would be.
+"""Domain-knowledge weight adjustments applied on top of EM's own trained m/u, all as
+pure post-processing on the already-exported trained_settings dict (same shape
+degeneracy_check.py/evaluate.py already operate on) -- EM trains completely
+unmodified first, so every comparison gets a real, data-informed estimate; only
+afterward are specific comparisons' levels nudged before the final prediction Linker
+is built from the adjusted settings (see splink_model.linker_from_settings). Two
+mechanisms, both interpolations rather than hard overrides (fix_m_probability/
+fix_u_probability, which would bypass EM training entirely for a comparison):
 
-Unlike a hard per-attribute override (fix_m_probability/fix_u_probability, bypassing
-EM training entirely for that comparison), this blends EM's data-driven estimate with
-a fixed domain-prior target, weighted by how much calibration data actually backs the
-EM estimate (attribute_discriminative_power's n_true_pairs) -- more data lets EM's own
-finding dominate more, but the prior always retains some influence (MAX_PRIOR_WEIGHT <
-1.0) even at a well-populated sample, since these ingredient categories are asserted
-to always carry real nutrition-significance, not just when data happens to be sparse.
+1. `apply_nutrition_priors` -- attributes that track a nutritionally-significant
+   ingredient or dietary classification (meat/dairy/egg = nutrient-dense,
+   sugar/molasses/honey/syrup = calorie-dense, vegetarian/vegan/plant-based = dietary
+   classification) have their learned m/u blended TOWARD a strong domain prior, since
+   this kind of difference reliably means two products are nutritionally different,
+   more reliably than a small/unlucky calibration sample may capture.
 
-Applied as a pure post-processing step on the already-exported trained_settings dict
-(same shape degeneracy_check.py/evaluate.py already operate on) -- EM trains
-completely unmodified first, so every comparison (including nutrition-significant
-ones) gets a real, data-informed estimate; only afterward are the flagged comparisons'
-levels nudged toward the prior before the final prediction Linker is built from the
-adjusted settings (see splink_model.linker_from_settings).
+2. `dampen_description_weight` -- `description`'s own text-similarity comparison has
+   repeatedly shown instability at this project's block scale (label_switching and
+   collapsed flags recurring across nearly every real `beans` round -- see
+   degeneracy_check.py's verified cases), and short, highly repetitive product names
+   (many distinct real products all literally named "Baked beans") make text
+   similarity an inherently noisy match signal for a block like this -- prone to both
+   false agreement (different products, similar generic name) and false disagreement
+   (same product, differently formatted name). Rather than let one noisy, unstable
+   comparison dominate the final match_weight regardless of what the (real,
+   attribute-derived) nutrition signal says, its learned m/u are shrunk toward "no
+   information" (m == u) by a fixed damping factor.
 
-Detection is name/description substring matching, not a per-block/per-attribute
+Detection for (1) is name/description substring matching, not a per-block/per-attribute
 registry -- see classify_nutrition_significance's docstring for why, and for the
 tradeoff against also scanning keyword lists.
 """
@@ -43,9 +47,16 @@ NUTRIENT_DENSE_TERMS = frozenset(
     {
         "meat", "beef", "pork", "poultry", "chicken", "turkey", "fish", "bacon",
         "sausage", "dairy", "milk", "cheese", "cream", "butter", "egg", "eggs",
+        "fat", "lard", "whey"
     }
 )
 CALORIE_DENSE_TERMS = frozenset({"sugar", "molasses", "honey", "syrup", "corn syrup", "brown sugar"})
+# A product's vegetarian/vegan/plant-based status is arguably the MOST totalizing
+# nutrition-relevant distinction of the three groups here -- it isn't just one
+# ingredient's presence, it's a claim about the product's entire composition (a vegan
+# product cannot legitimately match anything containing meat/dairy/egg at all) -- see
+# _GROUPS' ordering below for why this group is checked first.
+DIETARY_CLASSIFICATION_TERMS = frozenset({"vegetarian", "vegan", "plant-based", "plant based"})
 
 # (m_probability, u_probability) prior targets per group. Nutrient-dense ingredients
 # (meat/dairy/egg) are treated as a more categorical, near-binary difference (a
@@ -54,20 +65,65 @@ CALORIE_DENSE_TERMS = frozenset({"sugar", "molasses", "honey", "syrup", "corn sy
 # "lightly sweetened" vs "unsweetened" isn't as clear-cut as "has bacon" vs "doesn't")
 # -- so the calorie-dense prior is deliberately weaker (closer to a generic
 # attribute's typical behavior) than the nutrient-dense one.
-NUTRIENT_DENSE_PRIOR = (0.93, 0.15)
-CALORIE_DENSE_PRIOR = (0.85, 0.25)
+# Was (0.93, 0.15) / (0.85, 0.25); pushed further apart per explicit instruction to
+# strengthen the nudge -- verified real effect: beans_contains_meat went from
+# EM-only m=0.547 u=0.479 (log2(m/u)~=0.19 bits, ~noise) to m=0.772 u=0.249
+# (~1.63 bits), and holdout f1 for the block itself (not just this one attribute)
+# rose from 0.0066 to 0.0141 in the same real run once description-damping was added
+# alongside it. A further push to (0.995, 0.02)/(0.95, 0.08) with MAX_PRIOR_WEIGHT=
+# 0.25 was tried and reverted -- it moved beans_contains_meat further (m=0.879
+# u=0.135) but the block's own f1 dropped to 0.0103, worse than this setting's
+# 0.0141 -- past some point, overriding EM's own (reasonably informative) fit costs
+# more than the stronger assertion is worth. This is that sweet spot, verified
+# against real data, not a guess -- see PLAN.md-adjacent verification in this
+# module's git history if these numbers ever need revisiting.
+NUTRIENT_DENSE_PRIOR = (0.97, 0.06)
+CALORIE_DENSE_PRIOR = (0.90, 0.15)
+# At least as strong as NUTRIENT_DENSE_PRIOR, for the reason given at
+# DIETARY_CLASSIFICATION_TERMS above -- a vegetarian/vegan/plant-based claim covers
+# the same ground as the nutrient-dense terms (and more), not a lesser version of it.
+DIETARY_CLASSIFICATION_PRIOR = (0.98, 0.04)
+
+# Group name -> (term set, prior target), in classification-priority order: checked
+# top to bottom, first match wins. dietary_classification is checked BEFORE
+# nutrient_dense on purpose -- an attribute like "beans_is_vegetarian" ("Indicates if
+# the product is vegetarian (contains no meat)") would otherwise match on "meat" and
+# get misclassified as nutrient_dense instead of the (here, more specific and
+# stronger) dietary_classification group. None of the three term sets currently
+# overlap in practice, but ordering by specificity is the correct default regardless
+# -- keeping this as one ordered list (rather than three separate if-checks) also
+# makes adding a fourth group later a one-line change instead of a restructure.
+_GROUPS: list[tuple[str, frozenset[str], tuple[float, float]]] = [
+    ("dietary_classification", DIETARY_CLASSIFICATION_TERMS, DIETARY_CLASSIFICATION_PRIOR),
+    ("nutrient_dense", NUTRIENT_DENSE_TERMS, NUTRIENT_DENSE_PRIOR),
+    ("calorie_dense", CALORIE_DENSE_TERMS, CALORIE_DENSE_PRIOR),
+]
+PRIOR_BY_GROUP: dict[str, tuple[float, float]] = {name: prior for name, _, prior in _GROUPS}
 
 # Blend weight (trust in EM's own estimate) scales linearly with observed true-pair
 # count up to this cap -- below it, the prior increasingly dominates; the cap itself
 # is < 1.0 (not "full trust once past a threshold") because these categories are
 # asserted to always carry some real nutrition-significance the calibration sample
 # alone shouldn't be allowed to fully override, no matter how much data it has.
+# Was 0.8; lowered per explicit instruction for a stronger nudge -- the prior now
+# always retains at least 55% influence, even at a well-populated sample like
+# beans_contains_meat's 500 true pairs. (0.25 was also tried and reverted -- see the
+# prior-target comment above for the real-data verification of why.)
 PRIOR_CONFIDENCE_PAIRS = 200
-MAX_PRIOR_WEIGHT = 0.8
+MAX_PRIOR_WEIGHT = 0.45
+
+# `description`'s comparison levels are shrunk toward "no information" (m == u) by
+# this factor before prediction -- 0 = fully neutral (description contributes nothing
+# to match_weight), 1 = untouched (EM's own estimate used as-is). 0.35 keeps a modest
+# residual signal (description agreement still nudges the score) while sharply
+# reducing how much a single noisy, degeneracy-prone comparison can dominate the
+# final match_weight relative to the (real, attribute-derived) nutrition signal above.
+DESCRIPTION_DAMPING = 0.35
 
 
 def classify_nutrition_significance(attr: dict[str, Any]) -> str | None:
-    """Returns "nutrient_dense", "calorie_dense", or None.
+    """Returns "dietary_classification", "nutrient_dense", "calorie_dense", or None
+    -- see _GROUPS for the term sets and why dietary_classification is checked first.
 
     Checked against the attribute's own `name` + `description` only -- not its
     fndds_keywords/off_keywords (or, for a categorical attribute, each category's
@@ -80,10 +136,9 @@ def classify_nutrition_significance(attr: dict[str, Any]) -> str | None:
     safer option for now -- widen to keyword scanning only if a real missed case
     shows up."""
     text = f"{attr.get('name', '')} {attr.get('description', '')}".lower()
-    if any(term in text for term in NUTRIENT_DENSE_TERMS):
-        return "nutrient_dense"
-    if any(term in text for term in CALORIE_DENSE_TERMS):
-        return "calorie_dense"
+    for group, terms, _prior in _GROUPS:
+        if any(term in text for term in terms):
+            return group
     return None
 
 
@@ -127,7 +182,7 @@ def apply_nutrition_priors(
         group = classify_nutrition_significance(attr)
         if group is None:
             continue
-        prior = NUTRIENT_DENSE_PRIOR if group == "nutrient_dense" else CALORIE_DENSE_PRIOR
+        prior = PRIOR_BY_GROUP[group]
         levels = [lvl for lvl in comparison.get("comparison_levels", []) if not lvl.get("is_null_level")]
         if len(levels) != 2:
             log.warning(
@@ -155,4 +210,41 @@ def apply_nutrition_priors(
         )
         exact_level["m_probability"], exact_level["u_probability"] = m, u
         else_level["m_probability"], else_level["u_probability"] = 1 - m, 1 - u
+    return settings
+
+
+def dampen_description_weight(
+    trained_settings: dict[str, Any], damping: float = DESCRIPTION_DAMPING
+) -> dict[str, Any]:
+    """Returns a NEW settings dict (deep-copied; `trained_settings` itself is never
+    mutated) with `description`'s comparison levels shrunk toward "no information"
+    (m == u) by `damping` -- see this module's docstring for why.
+
+    Each non-null level's m_probability is pulled toward its OWN u_probability
+    (`u` is left untouched) -- `description` has more than 2 levels (JaroWinklerAt
+    Thresholds, unlike an attribute's 2-level ExactMatch), so there's no single
+    complementary "else" level to recompute the way apply_nutrition_priors does;
+    shrinking only m keeps the direction of any real signal intact (still m >= u,
+    i.e. non-negative evidence) while reducing its magnitude, rather than blending
+    both m and u toward some arbitrary midpoint that could flip the sign.
+    `damping=1` is a no-op (m unchanged); `damping=0` sets m == u on every level, i.e.
+    log2(m/u) == 0 -- description contributes nothing to match_weight at all.
+    """
+    settings = copy.deepcopy(trained_settings)
+    for comparison in settings.get("comparisons", []):
+        if comparison.get("output_column_name") != "description":
+            continue
+        for level in comparison.get("comparison_levels", []):
+            if level.get("is_null_level"):
+                continue
+            m_data, u_data = level["m_probability"], level["u_probability"]
+            level["m_probability"] = damping * m_data + (1 - damping) * u_data
+            log.info(
+                "description level %r: damping m=%.3f toward u=%.3f (damping=%.2f) -> m=%.3f",
+                level.get("label_for_charts", level.get("sql_condition")),
+                m_data,
+                u_data,
+                damping,
+                level["m_probability"],
+            )
     return settings

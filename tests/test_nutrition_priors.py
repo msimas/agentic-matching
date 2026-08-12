@@ -4,11 +4,14 @@ import pytest
 
 from agentic_matching.linking.nutrition_priors import (
     CALORIE_DENSE_PRIOR,
+    DESCRIPTION_DAMPING,
+    DIETARY_CLASSIFICATION_PRIOR,
     MAX_PRIOR_WEIGHT,
     NUTRIENT_DENSE_PRIOR,
     PRIOR_CONFIDENCE_PAIRS,
     apply_nutrition_priors,
     classify_nutrition_significance,
+    dampen_description_weight,
 )
 
 # -- classify_nutrition_significance ---------------------------------------------
@@ -31,6 +34,33 @@ def test_classifies_calorie_dense():
 def test_nutrient_dense_checked_before_calorie_dense_when_both_present():
     attr = {"name": "x", "description": "contains meat and sugar"}
     assert classify_nutrition_significance(attr) == "nutrient_dense"
+
+
+def test_classifies_dietary_classification_vegan():
+    attr = {"name": "beans_is_vegan", "description": "Whether the product is labeled vegan."}
+    assert classify_nutrition_significance(attr) == "dietary_classification"
+
+
+def test_classifies_dietary_classification_vegetarian():
+    attr = {"name": "beans_is_vegetarian", "description": "Whether the product is vegetarian."}
+    assert classify_nutrition_significance(attr) == "dietary_classification"
+
+
+def test_classifies_dietary_classification_plant_based_hyphenated_and_spaced():
+    assert classify_nutrition_significance({"name": "x", "description": "plant-based product"}) == (
+        "dietary_classification"
+    )
+    assert classify_nutrition_significance({"name": "x", "description": "plant based product"}) == (
+        "dietary_classification"
+    )
+
+
+def test_dietary_classification_checked_before_nutrient_dense():
+    # "vegetarian" attributes often mention "meat" in their own description (e.g.
+    # "contains no meat") -- must classify as dietary_classification, not
+    # nutrient_dense, despite "meat" being a NUTRIENT_DENSE_TERMS member too.
+    attr = {"name": "beans_is_vegetarian", "description": "Indicates the product is vegetarian (contains no meat)."}
+    assert classify_nutrition_significance(attr) == "dietary_classification"
 
 
 def test_unrelated_attribute_returns_none():
@@ -111,6 +141,15 @@ def test_calorie_dense_uses_its_own_weaker_prior():
     assert exact["m_probability"] != pytest.approx(NUTRIENT_DENSE_PRIOR[0])
 
 
+def test_dietary_classification_attribute_uses_its_own_prior():
+    settings = _settings_with_comparison("beans_is_vegan", 0.5, 0.5)
+    attrs = [{"name": "beans_is_vegan", "description": "Whether the product is vegan."}]
+    result = apply_nutrition_priors(settings, attrs, [{"attribute": "beans_is_vegan", "n_true_pairs": 0}])
+    exact = result["comparisons"][0]["comparison_levels"][1]
+    assert exact["m_probability"] == pytest.approx(DIETARY_CLASSIFICATION_PRIOR[0])
+    assert exact["u_probability"] == pytest.approx(DIETARY_CLASSIFICATION_PRIOR[1])
+
+
 def test_missing_discriminative_power_entry_defaults_to_zero_true_pairs():
     # No entry for this attribute in discriminative_power -> n_true_pairs=0 -> prior dominates fully.
     settings = _settings_with_comparison("beans_contains_meat", 0.9, 0.9)
@@ -139,10 +178,68 @@ def test_non_two_level_comparison_skipped_without_error():
     assert result == settings
 
 
-def test_description_comparison_never_touched():
+def test_description_comparison_never_touched_by_apply_nutrition_priors():
     settings = _settings_with_comparison("description", 0.9, 0.1)
     # Even if somehow classified (it wouldn't be, since it's not in `attrs`), only
     # comparisons whose column matches an attribute name are ever considered.
     attrs = [{"name": "beans_contains_meat", "description": "contains meat"}]
     result = apply_nutrition_priors(settings, attrs, [])
     assert result == settings
+
+
+# -- dampen_description_weight ----------------------------------------------------
+
+
+def _description_settings(levels: list[tuple[float, float]]) -> dict:
+    comparison_levels = [{"is_null_level": True}]
+    for i, (m, u) in enumerate(levels):
+        comparison_levels.append({"label_for_charts": f"level_{i}", "m_probability": m, "u_probability": u})
+    return {"comparisons": [{"output_column_name": "description", "comparison_levels": comparison_levels}]}
+
+
+def test_damping_zero_sets_m_equal_to_u():
+    settings = _description_settings([(0.9, 0.1), (0.6, 0.3)])
+    result = dampen_description_weight(settings, damping=0.0)
+    for level in result["comparisons"][0]["comparison_levels"][1:]:
+        assert level["m_probability"] == pytest.approx(level["u_probability"])
+
+
+def test_damping_one_is_a_no_op():
+    settings = _description_settings([(0.9, 0.1), (0.6, 0.3)])
+    result = dampen_description_weight(settings, damping=1.0)
+    assert result == settings
+
+
+def test_damping_shrinks_m_toward_u_without_touching_u():
+    settings = _description_settings([(0.9, 0.1)])
+    result = dampen_description_weight(settings, damping=0.35)
+    level = result["comparisons"][0]["comparison_levels"][1]
+    assert level["m_probability"] == pytest.approx(0.35 * 0.9 + 0.65 * 0.1)
+    assert level["u_probability"] == pytest.approx(0.1)  # u untouched
+
+
+def test_damping_preserves_sign_of_evidence():
+    # m stays >= u after damping -- shrinking toward u, not past it.
+    settings = _description_settings([(0.9, 0.1)])
+    result = dampen_description_weight(settings, damping=DESCRIPTION_DAMPING)
+    level = result["comparisons"][0]["comparison_levels"][1]
+    assert level["m_probability"] >= level["u_probability"]
+
+
+def test_null_level_untouched():
+    settings = _description_settings([(0.9, 0.1)])
+    result = dampen_description_weight(settings, damping=0.0)
+    assert result["comparisons"][0]["comparison_levels"][0] == {"is_null_level": True}
+
+
+def test_non_description_comparison_untouched():
+    settings = _settings_with_comparison("beans_contains_meat", 0.9, 0.1)
+    result = dampen_description_weight(settings, damping=0.0)
+    assert result == settings
+
+
+def test_original_settings_not_mutated_by_damping():
+    settings = _description_settings([(0.9, 0.1)])
+    original = copy.deepcopy(settings)
+    dampen_description_weight(settings, damping=0.0)
+    assert settings == original
