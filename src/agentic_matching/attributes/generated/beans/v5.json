@@ -2,79 +2,85 @@
   {
     "name": "beans_bean_type",
     "kind": "categorical",
-    "description": "The specific type of bean (kidney, pinto, black, white, lima, soy, etc.).",
+    "description": "The specific type of bean (kidney, pinto, black, lima, etc.).",
     "categories": {
       "kidney": {
         "fndds_keywords": [
-          "kidney"
+          "kidney",
+          "kidney beans"
         ],
         "off_keywords": [
           "kidney",
-          "alubia ri\u00f1on",
-          "kidneybohnen"
+          "kidney beans",
+          "Dark Red Kidney Beans",
+          "Kidney Bohnen"
         ]
       },
       "pinto": {
         "fndds_keywords": [
-          "pinto"
+          "pinto",
+          "pinto beans"
         ],
         "off_keywords": [
           "pinto",
-          "alubias rojas",
-          "feijao"
+          "pinto beans",
+          "Cocina Latina",
+          "Central American"
         ]
       },
       "black": {
         "fndds_keywords": [
-          "black"
+          "black",
+          "black beans"
         ],
         "off_keywords": [
           "black",
-          "haricots noirs",
-          "haricots"
-        ]
-      },
-      "white": {
-        "fndds_keywords": [
-          "white"
-        ],
-        "off_keywords": [
-          "white",
-          "haricots blancs",
-          "feij\u00e3o encarnado"
+          "black beans",
+          "Haricots"
         ]
       },
       "lima": {
         "fndds_keywords": [
-          "lima"
+          "lima",
+          "lima beans"
         ],
         "off_keywords": [
-          "lima"
+          "lima",
+          "lima beans",
+          "green lima"
         ]
       },
-      "soy": {
+      "white": {
         "fndds_keywords": [
-          "soy"
+          "white",
+          "white beans"
         ],
         "off_keywords": [
-          "soy"
+          "white",
+          "white beans",
+          "Weisse Bohnen",
+          "haricots blancs"
         ]
       },
       "garbanzo": {
         "fndds_keywords": [
-          "garbanzo"
+          "garbanzo",
+          "chickpea"
         ],
         "off_keywords": [
           "garbanzo",
-          "chick pea"
+          "chickpea",
+          "garbanzos cocidos"
         ]
       },
-      "fava": {
+      "refried": {
         "fndds_keywords": [
-          "fava"
+          "refried",
+          "refried beans"
         ],
         "off_keywords": [
-          "fava"
+          "refried",
+          "refried beans"
         ]
       },
       "other": {
@@ -86,14 +92,16 @@
   {
     "name": "beans_preparation_method",
     "kind": "categorical",
-    "description": "The method of preparation (canned, dried, cooked).",
+    "description": "How the beans were prepared (canned, dried, etc.).",
     "categories": {
       "canned": {
         "fndds_keywords": [
           "canned"
         ],
         "off_keywords": [
-          "canned"
+          "canned",
+          "en:canned-foods",
+          "en:canned-plant-based-foods"
         ]
       },
       "dried": {
@@ -109,7 +117,8 @@
           "cooked"
         ],
         "off_keywords": [
-          "cooked"
+          "cooked",
+          "cuisson vapeur"
         ]
       },
       "other": {
@@ -117,17 +126,6 @@
         "off_keywords": []
       }
     }
-  },
-  {
-    "name": "beans_is_refried",
-    "kind": "boolean",
-    "description": "Whether the product is refried beans.",
-    "fndds_keywords": [
-      "refried"
-    ],
-    "off_keywords": [
-      "refried"
-    ]
   },
   {
     "name": "beans_contains_meat",
@@ -139,9 +137,7 @@
       "bacon",
       "ham",
       "sausage",
-      "frank",
-      "frankfurter",
-      "with meat"
+      "frankfurter"
     ],
     "off_keywords": [
       "meat",
@@ -149,8 +145,7 @@
       "bacon",
       "ham",
       "sausage",
-      "frankfurter",
-      "with meat"
+      "frankfurter"
     ]
   }
 ]

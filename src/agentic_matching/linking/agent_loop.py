@@ -588,6 +588,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             n_final_written,
         )
 
+    client.log_usage_summary(label=f"{block_name} linking, cumulative")
     return rounds
 
 

@@ -1,101 +1,45 @@
 [
   {
-    "name": "vegetable_type",
+    "name": "breaded_vegetables_vegetable_type",
     "kind": "categorical",
-    "description": "Categorizes the specific vegetable used in the breaded vegetable product, based on direct naming in the product description. Grounded in observed terms from the block's samples, this attribute enables precise matching by identifying the actual vegetable (e.g., onion, broccoli, mushroom, cauliflower, squash, green beans, pickle, tomato), which is essential because preparation style alone (e.g., fried) is shared across all records and does not distinguish true matches.",
+    "description": "The specific vegetable used in the breaded/fried product.",
     "categories": {
       "onion": {
         "fndds_keywords": [
           "onion",
-          "onion rings"
+          "rings"
         ],
         "off_keywords": [
           "onion",
-          "onion rings",
-          "onion rings*",
-          "rondelles d'oignons pan\u00e9es"
-        ]
-      },
-      "broccoli": {
-        "fndds_keywords": [
-          "broccoli"
-        ],
-        "off_keywords": [
-          "broccoli"
-        ]
-      },
-      "mushroom": {
-        "fndds_keywords": [
-          "mushrooms"
-        ],
-        "off_keywords": [
-          "mushrooms"
-        ]
-      },
-      "cauliflower": {
-        "fndds_keywords": [
-          "cauliflower"
-        ],
-        "off_keywords": [
-          "cauliflower"
-        ]
-      },
-      "eggplant": {
-        "fndds_keywords": [
-          "eggplant"
-        ],
-        "off_keywords": [
-          "eggplant"
-        ]
-      },
-      "squash": {
-        "fndds_keywords": [
-          "squash",
-          "summer squash"
-        ],
-        "off_keywords": [
-          "squash",
-          "summer squash"
-        ]
-      },
-      "green beans": {
-        "fndds_keywords": [
-          "green beans"
-        ],
-        "off_keywords": [
-          "green beans"
+          "rings",
+          "cebolla"
         ]
       },
       "pickle": {
         "fndds_keywords": [
           "pickles"
         ],
-        "off_keywords": [
-          "pickle"
-        ]
+        "off_keywords": []
       },
-      "tomato": {
+      "vegetable": {
         "fndds_keywords": [
-          "tomatoes",
-          "green tomatoes"
+          "vegetable"
         ],
         "off_keywords": [
-          "tomato",
-          "green tomatoes"
+          "vegetable",
+          "mixes"
         ]
+      },
+      "tempura": {
+        "fndds_keywords": [
+          "tempura"
+        ],
+        "off_keywords": []
+      },
+      "other": {
+        "fndds_keywords": [],
+        "off_keywords": []
       }
     }
-  },
-  {
-    "name": "is_pakora",
-    "kind": "boolean",
-    "description": "Identifies whether the product is explicitly or implicitly described as pakora, a distinct traditional Indian breaded vegetable dish. This attribute helps distinguish between Western-style fried vegetables and South Asian-style pakora, which may not be captured by general terms like 'onion rings' or 'fried vegetables'.",
-    "fndds_keywords": [
-      "pakora"
-    ],
-    "off_keywords": [
-      "pakora",
-      "pakora*"
-    ]
   }
 ]

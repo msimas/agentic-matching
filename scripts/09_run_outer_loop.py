@@ -14,6 +14,7 @@ from __future__ import annotations
 import typer
 
 from agentic_matching.config import BLOCKS, configure_logging
+from agentic_matching.llm.client import get_llm_client
 from agentic_matching.outer_loop import ALL_STEPS, run_outer_loop
 
 app = typer.Typer(add_completion=False)
@@ -38,7 +39,11 @@ def main(
     invalid = set(parsed_steps) - set(ALL_STEPS)
     if invalid:
         raise typer.BadParameter(f"--steps must be a subset of {ALL_STEPS}, got unknown step(s) {sorted(invalid)}")
-    rounds = run_outer_loop(block, steps=parsed_steps)
+    # Built here (not left for run_outer_loop to create internally) so this script can
+    # echo the real usage total below -- an internally-created client would go out of
+    # scope with no way to read its usage_totals back out.
+    client = get_llm_client()
+    rounds = run_outer_loop(block, client=client, steps=parsed_steps)
     for r in rounds:
         typer.echo(
             f"outer round {r.round}: linking_rounds={r.linking_rounds_completed} "
@@ -49,6 +54,12 @@ def main(
         typer.echo("No blocking problem found in the final outer round.")
     elif rounds:
         typer.echo("Outer loop ended with a blocking problem still flagged -- see the finding above.")
+    u = client.usage_totals
+    typer.echo(
+        f"LLM usage (full outer loop -- steps={sorted(set(parsed_steps))}, block={block}): "
+        f"{u['calls']} call(s), {u['prompt_tokens']} prompt + {u['completion_tokens']} completion "
+        f"= {u['total_tokens']} total tokens"
+    )
 
 
 if __name__ == "__main__":

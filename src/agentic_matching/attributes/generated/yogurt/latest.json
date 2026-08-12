@@ -2,7 +2,7 @@
   {
     "name": "is_greek",
     "kind": "boolean",
-    "description": "Indicates whether the product is Greek-style yogurt, based on the presence of 'greek' or 'grec' in the description or name.",
+    "description": "Is this a Greek-style yogurt?",
     "fndds_keywords": [
       "greek"
     ],
@@ -12,18 +12,54 @@
     ]
   },
   {
+    "name": "is_drink",
+    "kind": "boolean",
+    "description": "Is this a drinkable yogurt product?",
+    "fndds_keywords": [
+      "drink",
+      "smoothie",
+      "kefir"
+    ],
+    "off_keywords": [
+      "drink",
+      "smoothie",
+      "kefir",
+      "a boire"
+    ]
+  },
+  {
+    "name": "contains_cereal",
+    "kind": "boolean",
+    "description": "Does this include cereal (granola, oat bran, corn flakes, etc.)?",
+    "fndds_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
+    ],
+    "off_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
+    ]
+  },
+  {
     "name": "fat_level",
     "kind": "categorical",
-    "description": "Fat content tier based on milk type (whole, low fat, nonfat), derived from explicit mentions of milk type in the description.",
+    "description": "Fat content tier",
     "categories": {
-      "full_fat": {
+      "fat_free": {
         "fndds_keywords": [
-          "whole milk"
+          "nonfat",
+          "fat free",
+          "skim"
         ],
         "off_keywords": [
-          "whole milk",
-          "full fat",
-          "entier"
+          "fat free",
+          "0% fat",
+          "skimmed",
+          "nonfat"
         ]
       },
       "low_fat": {
@@ -39,64 +75,87 @@
           "2%"
         ]
       },
-      "nonfat": {
+      "full_fat": {
         "fndds_keywords": [
-          "nonfat",
-          "fat free",
-          "skim"
+          "whole milk"
         ],
         "off_keywords": [
-          "fat free",
-          "0% fat",
-          "skimmed",
-          "nonfat"
+          "whole milk",
+          "full fat",
+          "entier"
         ]
       }
     }
   },
   {
-    "name": "flavor",
+    "name": "specific_fruit_flavor",
     "kind": "categorical",
-    "description": "Specific flavor of the yogurt, observed in samples (e.g., vanilla, strawberry, blueberry, chocolate, plain), derived from explicit flavor terms in the product name or description.",
+    "description": "The specific fruit flavor present in the yogurt, if any.  This is more granular than a simple 'fruit flavored' boolean.",
     "categories": {
+      "strawberry": {
+        "fndds_keywords": [
+          "strawberry"
+        ],
+        "off_keywords": [
+          "strawberry"
+        ]
+      },
+      "blueberry": {
+        "fndds_keywords": [
+          "blueberry"
+        ],
+        "off_keywords": [
+          "blueberry"
+        ]
+      },
+      "peach": {
+        "fndds_keywords": [
+          "peach"
+        ],
+        "off_keywords": [
+          "peach"
+        ]
+      },
       "vanilla": {
         "fndds_keywords": [
           "vanilla"
         ],
         "off_keywords": [
-          "vanilla",
-          "vanille"
+          "vanilla"
         ]
       },
-      "strawberry": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "strawberry",
-          "fraise"
-        ]
-      },
-      "blueberry": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "blueberry",
-          "bleu",
-          "blue"
-        ]
-      },
-      "peach": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "peach",
-          "p\u00eache"
-        ]
-      },
-      "chocolate": {
+      "mango": {
         "fndds_keywords": [
-          "chocolate"
+          "mango"
         ],
         "off_keywords": [
-          "chocolate",
-          "chocolat"
+          "mango"
+        ]
+      },
+      "lemon": {
+        "fndds_keywords": [
+          "lemon"
+        ],
+        "off_keywords": [
+          "lemon"
+        ]
+      },
+      "pistachio": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "pistachio"
+        ]
+      },
+      "mirabelle": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "mirabelle"
+        ]
+      },
+      "salted caramel": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "salted caramel"
         ]
       },
       "plain": {
@@ -104,45 +163,9 @@
           "plain"
         ],
         "off_keywords": [
-          "plain",
-          "nature",
-          "natural"
+          "plain"
         ]
       }
     }
-  },
-  {
-    "name": "is_frozen",
-    "kind": "boolean",
-    "description": "Indicates whether the product is a frozen yogurt or frozen yogurt-based item, based on explicit mentions of 'frozen', 'soft serve', or 'bar' in the description.",
-    "fndds_keywords": [
-      "frozen",
-      "soft serve",
-      "bar"
-    ],
-    "off_keywords": [
-      "frozen",
-      "fettarmer",
-      "joghurt",
-      "smoothie",
-      "bar"
-    ]
-  },
-  {
-    "name": "is_baby_toddler",
-    "kind": "boolean",
-    "description": "Indicates whether the product is intended for baby or toddler consumption, based on explicit mentions of 'baby', 'toddler', or 'melts' in the description.",
-    "fndds_keywords": [
-      "baby",
-      "toddler",
-      "melts"
-    ],
-    "off_keywords": [
-      "baby",
-      "toddler",
-      "bifidus",
-      "smultoetjes",
-      "cremoso"
-    ]
   }
 ]

@@ -2,21 +2,52 @@
   {
     "name": "is_greek",
     "kind": "boolean",
-    "description": "Indicates whether the yogurt is Greek-style, based on presence of 'greek', 'grec', or 'grecque' in the description or name.",
+    "description": "Is this a Greek-style yogurt?",
     "fndds_keywords": [
-      "greek",
-      "grec"
+      "greek"
     ],
     "off_keywords": [
       "greek",
-      "grec",
-      "grecque"
+      "grec"
+    ]
+  },
+  {
+    "name": "is_drink",
+    "kind": "boolean",
+    "description": "Is this a drinkable yogurt product?",
+    "fndds_keywords": [
+      "drink",
+      "smoothie",
+      "kefir"
+    ],
+    "off_keywords": [
+      "drink",
+      "smoothie",
+      "kefir",
+      "a boire"
+    ]
+  },
+  {
+    "name": "contains_cereal",
+    "kind": "boolean",
+    "description": "Does this include cereal (granola, oat bran, corn flakes, etc.)?",
+    "fndds_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
+    ],
+    "off_keywords": [
+      "granola",
+      "cereal",
+      "oat",
+      "muesli"
     ]
   },
   {
     "name": "fat_level",
     "kind": "categorical",
-    "description": "Categorizes yogurt fat content based on milk type and fat descriptors: fat-free, low-fat, or full-fat.",
+    "description": "Fat content tier",
     "categories": {
       "fat_free": {
         "fndds_keywords": [
@@ -57,27 +88,16 @@
     }
   },
   {
-    "name": "flavor",
+    "name": "specific_fruit_flavor",
     "kind": "categorical",
-    "description": "Specific flavor of yogurt, derived from observed flavors in the sample pairs (e.g., vanilla, strawberry, blueberry, peach, plain, fruit blend).",
+    "description": "The specific fruit flavor present in the yogurt, if any.  This is more granular than a simple 'fruit flavored' boolean.",
     "categories": {
-      "vanilla": {
-        "fndds_keywords": [
-          "vanilla"
-        ],
-        "off_keywords": [
-          "vanilla",
-          "vanille"
-        ]
-      },
       "strawberry": {
         "fndds_keywords": [
           "strawberry"
         ],
         "off_keywords": [
-          "strawberry",
-          "fraise",
-          "fruits rouges"
+          "strawberry"
         ]
       },
       "blueberry": {
@@ -85,8 +105,6 @@
           "blueberry"
         ],
         "off_keywords": [
-          "blueberry",
-          "acacia",
           "blueberry"
         ]
       },
@@ -95,21 +113,49 @@
           "peach"
         ],
         "off_keywords": [
-          "peach",
-          "p\u00eache"
+          "peach"
         ]
       },
-      "fruit_blend": {
+      "vanilla": {
         "fndds_keywords": [
-          "fruit",
-          "fruit blend"
+          "vanilla"
         ],
         "off_keywords": [
-          "fruit",
-          "fruits rouges",
-          "fruits",
-          "fraise",
-          "framboise"
+          "vanilla"
+        ]
+      },
+      "mango": {
+        "fndds_keywords": [
+          "mango"
+        ],
+        "off_keywords": [
+          "mango"
+        ]
+      },
+      "lemon": {
+        "fndds_keywords": [
+          "lemon"
+        ],
+        "off_keywords": [
+          "lemon"
+        ]
+      },
+      "pistachio": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "pistachio"
+        ]
+      },
+      "mirabelle": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "mirabelle"
+        ]
+      },
+      "salted caramel": {
+        "fndds_keywords": [],
+        "off_keywords": [
+          "salted caramel"
         ]
       },
       "plain": {
@@ -117,9 +163,7 @@
           "plain"
         ],
         "off_keywords": [
-          "plain",
-          "nature",
-          "natural"
+          "plain"
         ]
       }
     }

@@ -8,6 +8,7 @@ import typer
 
 from agentic_matching.config import BLOCKS, configure_logging
 from agentic_matching.linking.agent_loop import run_linking_agent
+from agentic_matching.llm.client import get_llm_client
 
 app = typer.Typer(add_completion=False)
 
@@ -19,7 +20,11 @@ def main(
     configure_logging()
     if block not in BLOCKS:
         raise typer.BadParameter(f"--block must be one of {BLOCKS}, got {block!r}")
-    rounds = run_linking_agent(block)
+    # Built here (not left for run_linking_agent to create internally) so this script
+    # can echo the real usage total below -- an internally-created client would go out
+    # of scope with no way to read its usage_totals back out.
+    client = get_llm_client()
+    rounds = run_linking_agent(block, client=client)
     for r in rounds:
         ev = r.holdout_evaluation
         typer.echo(
@@ -37,6 +42,11 @@ def main(
             f"final deliverable: {last.n_final_matches} OFF records with a best FNDDS "
             f"match attached -> {last.final_matches_csv}"
         )
+    u = client.usage_totals
+    typer.echo(
+        f"LLM usage (linking stage, block={block}): {u['calls']} call(s), "
+        f"{u['prompt_tokens']} prompt + {u['completion_tokens']} completion = {u['total_tokens']} total tokens"
+    )
 
 
 if __name__ == "__main__":

@@ -227,6 +227,11 @@ def run_outer_loop(
         log.warning("Outer round %d flagged a blocking problem for '%s': %s", round_idx, block_name, trigger)
         linking_feedback = trigger
 
+    # Grand total across every stage this run actually included -- the same client
+    # instance (see `client = client or get_llm_client()` above) is reused for
+    # blocking/attributes/linking, so this accumulator already reflects the whole
+    # outer-loop run's real API cost, not just one stage's.
+    client.log_usage_summary(label=f"{block_name} FULL OUTER LOOP, grand total")
     return rounds
 
 

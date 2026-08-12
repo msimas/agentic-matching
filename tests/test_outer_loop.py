@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 import agentic_matching.outer_loop as outer_loop
@@ -104,7 +106,7 @@ def fakes(monkeypatch):
 
 def test_default_steps_calls_all_three(fakes, tmp_path, monkeypatch):
     monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=object())
+    run_outer_loop("beans", client=Mock())
     assert len(fakes["blocking"].calls) == 1
     assert len(fakes["attributes"].calls) == 1
     assert len(fakes["linking"].calls) == 1
@@ -112,7 +114,7 @@ def test_default_steps_calls_all_three(fakes, tmp_path, monkeypatch):
 
 def test_skipping_blocking_does_not_call_it(fakes, tmp_path, monkeypatch):
     monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=object(), steps=("attributes", "linking"))
+    run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"))
     assert fakes["blocking"].calls == []
     assert len(fakes["attributes"].calls) == 1
     assert len(fakes["linking"].calls) == 1
@@ -120,7 +122,7 @@ def test_skipping_blocking_does_not_call_it(fakes, tmp_path, monkeypatch):
 
 def test_only_linking_step_skips_blocking_and_attributes(fakes, tmp_path, monkeypatch):
     monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=object(), steps=("linking",))
+    run_outer_loop("beans", client=Mock(), steps=("linking",))
     assert fakes["blocking"].calls == []
     assert fakes["attributes"].calls == []
     assert len(fakes["linking"].calls) == 1
@@ -128,12 +130,12 @@ def test_only_linking_step_skips_blocking_and_attributes(fakes, tmp_path, monkey
 
 def test_invalid_step_raises():
     with pytest.raises(ValueError):
-        run_outer_loop("beans", client=object(), steps=("not_a_real_step",))
+        run_outer_loop("beans", client=Mock(), steps=("not_a_real_step",))
 
 
 def test_empty_steps_raises():
     with pytest.raises(ValueError):
-        run_outer_loop("beans", client=object(), steps=())
+        run_outer_loop("beans", client=Mock(), steps=())
 
 
 def test_cannot_loop_without_blocking_and_linking_stops_after_one_round(fakes, tmp_path, monkeypatch):
@@ -143,7 +145,7 @@ def test_cannot_loop_without_blocking_and_linking_stops_after_one_round(fakes, t
     fakes["linking"]._linking_rounds = [_round(n_candidate_pairs=1)]
     monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
     monkeypatch.setattr(outer_loop.agent_loop_settings, "max_outer_rounds", 5)
-    rounds = run_outer_loop("beans", client=object(), steps=("attributes", "linking"))
+    rounds = run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"))
     assert len(rounds) == 1
     assert rounds[0].trigger is not None
     assert len(fakes["linking"].calls) == 1

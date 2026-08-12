@@ -57,6 +57,18 @@ class ChatClient(ABC):
     """Common interface implemented by both the real Ollama-backed client and the
     offline mock used for development/testing without a running LLM server."""
 
+    def __init__(self) -> None:
+        # Cumulative token usage across every complete_json call made through THIS
+        # client instance -- deliberately tracked on the client, not per call-site,
+        # because a single client is shared across an entire outer-loop run (blocking
+        # -> attributes -> linking all reuse the same instance -- see
+        # outer_loop.run_outer_loop's `client = client or get_llm_client()`), so this
+        # is exactly the real per-block API cost by the time a run finishes, not just
+        # one stage's. MockChatClient inherits this unmodified and leaves it at zero --
+        # it makes no real API calls, so reporting a real number here would be
+        # fabricated, not estimated.
+        self.usage_totals: dict[str, int] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
     @abstractmethod
     def complete_json(
         self,
@@ -70,11 +82,27 @@ class ChatClient(ABC):
         the response is not valid JSON after retries."""
         raise NotImplementedError
 
+    def log_usage_summary(self, label: str = "") -> None:
+        """Logs this client's cumulative usage so far -- called at the end of each
+        agent-loop stage (run_blocking_agent/run_attribute_agent/run_linking_agent) AND
+        at the end of run_outer_loop, so a full outer-loop run naturally logs a running
+        total after each stage and a grand total at the end, all from the same
+        accumulator, without any separate aggregation logic."""
+        log.info(
+            "LLM usage%s: %d call(s), %d prompt tokens + %d completion tokens = %d total tokens.",
+            f" ({label})" if label else "",
+            self.usage_totals["calls"],
+            self.usage_totals["prompt_tokens"],
+            self.usage_totals["completion_tokens"],
+            self.usage_totals["total_tokens"],
+        )
+
 
 class LLMClient(ChatClient):
     """Real client, talking to an Ollama, Databricks, or any OpenAI-compatible server."""
 
     def __init__(self, settings: LLMSettings | None = None) -> None:
+        super().__init__()
         self.settings = settings or llm_settings
         self._is_databricks = self.settings.device == "databricks"
         if self._is_databricks:
@@ -86,9 +114,13 @@ class LLMClient(ChatClient):
                 timeout=self.settings.request_timeout_s,
             )
 
-    def _send(self, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> str:
-        """Returns the raw response content string. See this module's docstring for why
-        Databricks bypasses the openai SDK entirely here."""
+    def _send(self, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> tuple[str, dict[str, int] | None]:
+        """Returns (content, usage) -- usage is the API's own reported
+        {"prompt_tokens", "completion_tokens", "total_tokens"} for this ONE call, or
+        None if the response didn't include one (some backends/proxies omit it; not
+        every OpenAI-compatible server is guaranteed to report it despite the field
+        being part of the spec, so this is treated as optional, not assumed). See this
+        module's docstring for why Databricks bypasses the openai SDK entirely here."""
         if self._is_databricks:
             resp = self._httpx_client.post(
                 self.settings.effective_invocation_url,
@@ -96,7 +128,9 @@ class LLMClient(ChatClient):
                 json={"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"] or ""
+            body = resp.json()
+            usage = body.get("usage")
+            return body["choices"][0]["message"]["content"] or "", usage
         resp = self._client.chat.completions.create(
             model=self.settings.effective_model,
             messages=messages,
@@ -110,7 +144,24 @@ class LLMClient(ChatClient):
             # failure loop below is the fallback if that alone isn't reliable enough.
             response_format={"type": "json_object"},
         )
-        return resp.choices[0].message.content or ""
+        usage = (
+            {
+                "prompt_tokens": resp.usage.prompt_tokens,
+                "completion_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.total_tokens,
+            }
+            if resp.usage is not None
+            else None
+        )
+        return resp.choices[0].message.content or "", usage
+
+    def _record_usage(self, usage: dict[str, int] | None) -> None:
+        self.usage_totals["calls"] += 1
+        if usage is None:
+            return
+        self.usage_totals["prompt_tokens"] += usage.get("prompt_tokens", 0)
+        self.usage_totals["completion_tokens"] += usage.get("completion_tokens", 0)
+        self.usage_totals["total_tokens"] += usage.get("total_tokens", 0)
 
     def complete_json(
         self,
@@ -152,7 +203,18 @@ class LLMClient(ChatClient):
                 self.settings.effective_model,
                 f", retry {attempt}/{max_retries}" if attempt else "",
             )
-            content = self._send(messages, effective_max_tokens, effective_temperature)
+            content, usage = self._send(messages, effective_max_tokens, effective_temperature)
+            # Recorded for every attempt, including ones that go on to fail JSON
+            # parsing below -- a retry due to malformed output still consumed real
+            # tokens on the API side, and undercounting it here would make usage_totals
+            # diverge from the actual bill.
+            self._record_usage(usage)
+            log.info(
+                "LLM usage this call: %s (cumulative: %d call(s), %d total tokens)",
+                usage if usage is not None else "not reported by this backend",
+                self.usage_totals["calls"],
+                self.usage_totals["total_tokens"],
+            )
             log.debug("LLM response (attempt %d):\n%s", attempt + 1, content)
             try:
                 return json.loads(_strip_code_fence(content))

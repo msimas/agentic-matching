@@ -310,6 +310,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
         existing = attrs
 
     _persist_generated(block_name, select_final_attributes(rounds), version=len(rounds))
+    client.log_usage_summary(label=f"{block_name} attributes, cumulative")
     return rounds
 
 

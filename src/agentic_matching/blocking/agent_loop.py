@@ -367,6 +367,7 @@ def run_blocking_agent(
         )
     materialize_block(con, block_name, final_rule)
     con.close()
+    client.log_usage_summary(label=f"{block_name} blocking, cumulative")
     return rounds
 
 
