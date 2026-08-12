@@ -13,3 +13,4 @@ data/food.parquet
 *.log
 .tmp
 *.wal
+.DS_Store
