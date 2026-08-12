@@ -178,25 +178,194 @@ def _build_holdout_predictions(
     return fndds_df, off_df, true_labels, preds
 
 
-def score_against_holdout(
-    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5
+def _normalize_text(value: Any) -> str:
+    return str(value).strip().lower() if value not in (None, "") else ""
+
+
+def _off_to_true_fndds(true_labels: dict[str, str]) -> dict[str, set[str]]:
+    """Reverses true_labels (fdc_id -> its one true off_code) into off_code -> the set
+    of fdc_id(s) genuinely known to be correct for it. A set, not a single id, because
+    the holdout data itself sometimes labels more than one fdc_id as correct for the
+    same off_code -- verified real case on the beans holdout: off_code
+    0072036980786 is the labeled true partner for 5 different fdc_ids. Any one of them
+    is an acceptable "correct" answer once we're picking one fndds match per OFF item
+    (see score_against_holdout) -- not just whichever happened to be sampled first."""
+    off_to_fndds: dict[str, set[str]] = {}
+    for fndds_id, off_id in true_labels.items():
+        off_to_fndds.setdefault(off_id, set()).add(fndds_id)
+    return off_to_fndds
+
+
+def _resolvable_ceiling(true_partners: dict[str, set[str]], fndds_desc_by_id: dict[str, str]) -> dict[str, Any]:
+    """The best exact-id precision/recall/f1 ANY model could achieve on this holdout
+    sample using text-derived signal alone, given via _resolvable_ceiling's own
+    n_resolvable/n_ambiguous split -- exists because exact-id f1 isn't bounded by 1.0
+    in practice (see score_against_holdout's docstring for why 0.0-1.0 is the
+    mathematical range) but the holdout's own duplicate-description structure caps it
+    far lower, and that cap is worth knowing so a low f1 doesn't get chased as if 1.0
+    were reachable.
+
+    An OFF item is "resolvable" if its true fdc_id(s)' description text doesn't also
+    belong to some OTHER fdc_id that ISN'T one of its true partners (an "impostor") --
+    a model can then in principle always prefer the true one. It's "ambiguous" if an
+    impostor with byte-identical description text exists: no text signal (and every
+    attribute this pipeline builds is text-derived) can tell the true fdc_id apart from
+    the impostor, so even a perfect matcher is reduced to a coin flip there.
+
+    Verified real magnitude on the beans holdout's actual eval sample (500 positives,
+    seed=7): only 204 of 369 distinct true OFF items (55%) are resolvable -- the other
+    165 (45%) have an impostor. A model scoring f1=0.068 there isn't 6.8% of the way to
+    a perfect matcher; it's about 12% of the way to the ~0.55 ceiling this sample
+    actually allows.
+
+    Pure dict-in/dict-out (like _category_level_score) so it's testable without a real
+    trained linker."""
+    text_to_fndds_ids: dict[str, set[str]] = {}
+    for fndds_id, desc in fndds_desc_by_id.items():
+        text_to_fndds_ids.setdefault(_normalize_text(desc), set()).add(fndds_id)
+
+    n_true = len(true_partners)
+    n_resolvable = 0
+    for true_ids in true_partners.values():
+        texts = {_normalize_text(fndds_desc_by_id[t]) for t in true_ids if t in fndds_desc_by_id}
+        impostors = set()
+        for t in texts:
+            impostors |= text_to_fndds_ids.get(t, set()) - true_ids
+        if not impostors:
+            n_resolvable += 1
+
+    ceiling = n_resolvable / n_true if n_true else None
+    return {
+        "n_resolvable": n_resolvable,
+        "n_ambiguous": n_true - n_resolvable,
+        "max_achievable_precision": ceiling,
+        "max_achievable_recall": ceiling,
+        "max_achievable_f1": ceiling,
+    }
+
+
+def _category_level_score(
+    predicted: dict[str, str], true_partners: dict[str, set[str]], fndds_desc_by_id: dict[str, str]
 ) -> dict[str, Any]:
-    fndds_df, off_df, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
-    if fndds_df.empty or off_df.empty:
-        return {"n_holdout_positives": 0, "precision": None, "recall": None, "f1": None}
+    """Same precision/recall/f1 shape as score_against_holdout's exact-id scoring
+    (below), but counting a prediction "correct" whenever the predicted FNDDS record's
+    description text matches one of its true partner(s)' description text
+    (case/whitespace-insensitive), not only when the predicted id is the literal gold
+    fdc_id.
 
-    # Best (highest-probability) OFF match per FNDDS-side unique_id.
-    best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_l")
-    best = best[best["match_probability"] >= threshold]
+    `predicted` maps off_id -> the single fndds_id chosen as its best match (the same
+    selection production actually ships -- see score_against_holdout). `true_partners`
+    maps off_id -> the set of fdc_id(s) genuinely known correct for it (see
+    _off_to_true_fndds).
 
-    predicted = dict(zip(best["unique_id_l"], best["unique_id_r"]))
-    n_true = len(true_labels)
+    Exists because the exact-id gold pairs are far stricter than what this pipeline
+    can, or needs to, resolve. Verified on the beans holdout: 94% of true pairs
+    (12,045/12,767) share their FNDDS-side description text with at least one OTHER
+    true pair -- e.g. "BLACK BEANS" is the gold description for 281 different
+    (fdc_id, off_code) pairs. There is no text signal on either side that could
+    distinguish which specific fdc_id is "the" one right answer among hundreds of
+    identically-worded records, and this pipeline's category-level attribute set
+    (bean_type, contains_meat, ...) was never designed to resolve that level of
+    identity. Landing on a DIFFERENT but textually-identical fdc_id is a correct,
+    nutrition-equivalent match for this pipeline's actual job (attaching a nutrition
+    profile to a commercial product) even though exact-id scoring counts it as a dead
+    loss.
+
+    Pure dict-in/dict-out (like _holdout_error_examples) so it's testable without a
+    real trained linker."""
+    n_true = len(true_partners)
     n_pred = len(predicted)
-    n_correct = sum(1 for k, v in predicted.items() if true_labels.get(k) == v)
+    n_correct = 0
+    for off_id, predicted_fndds_id in predicted.items():
+        true_ids = true_partners.get(off_id)
+        if not true_ids:
+            continue
+        if predicted_fndds_id in true_ids:
+            n_correct += 1
+            continue
+        predicted_desc = fndds_desc_by_id.get(predicted_fndds_id)
+        if predicted_desc is None:
+            continue  # can't compare text we don't have -- neither correct nor incorrect, just excluded
+        true_descs = {_normalize_text(fndds_desc_by_id[t]) for t in true_ids if t in fndds_desc_by_id}
+        if _normalize_text(predicted_desc) in true_descs:
+            n_correct += 1
 
     precision = n_correct / n_pred if n_pred else 0.0
     recall = n_correct / n_true if n_true else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    return {
+        "n_category_correct": n_correct,
+        "category_precision": precision,
+        "category_recall": recall,
+        "category_f1": f1,
+    }
+
+
+def score_against_holdout(
+    block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5
+) -> dict[str, Any]:
+    """Scores using the SAME selection direction production actually ships with:
+    best_match_per_off picks, per OFF/commercial product, its single best FNDDS
+    candidate (drop_duplicates on unique_id_r, the OFF side) -- so this dedups on
+    unique_id_r too. Previously this dedup'd on unique_id_l (the FNDDS side) instead,
+    answering "if we pick FNDDS records' best OFF partner, do we find the right one" --
+    a DIFFERENT question than the one production's actual selection logic asks, since
+    a true pair can win reading FNDDS->best-OFF while losing its slot reading
+    OFF->best-FNDDS (or vice versa), especially with the duplicate-description
+    competition documented on _category_level_score. The old per-FNDDS-item numbers
+    are gone entirely, not kept alongside these -- they measured a selection algorithm
+    this pipeline doesn't actually run.
+
+    The OFF side includes sampled decoys with no true fdc_id at all (see
+    build_eval_frames) -- they compete for best-match slots on their OWN off_id (which
+    is realistic: a real product's candidate pool always includes near-miss FNDDS
+    records), but since they have no gold answer they're excluded from the
+    precision/recall accounting entirely (see the off_id in off_to_true_fndds filter
+    below), not counted as either correct or incorrect.
+
+    Also returns category-level precision/recall/f1 (see _category_level_score)
+    alongside the exact-id numbers; category_f1 is here for a human/LLM to read
+    alongside f1 and understand how much of the "failure" is exact-id's inherent
+    strictness on a duplicate-description-heavy holdout, not a real matching problem.
+    And returns max_achievable_{precision,recall,f1} (see _resolvable_ceiling) -- the
+    best exact-id score this SAMPLE'S own duplicate-description structure allows any
+    model to reach, so f1 is read against a reachable ceiling, not against 1.0."""
+    fndds_df, off_df, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
+    if fndds_df.empty or off_df.empty:
+        return {
+            "n_holdout_positives": 0,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "category_precision": None,
+            "category_recall": None,
+            "category_f1": None,
+            "n_resolvable": None,
+            "n_ambiguous": None,
+            "max_achievable_precision": None,
+            "max_achievable_recall": None,
+            "max_achievable_f1": None,
+        }
+
+    off_to_true_fndds = _off_to_true_fndds(true_labels)
+
+    # Best (highest-probability) FNDDS match per OFF-side unique_id -- mirrors
+    # best_match_per_off's real production selection (see docstring above).
+    best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_r")
+    best = best[best["match_probability"] >= threshold]
+
+    predicted = dict(zip(best["unique_id_r"], best["unique_id_l"]))  # off_id -> predicted fndds_id
+    predicted_true_only = {off_id: fndds_id for off_id, fndds_id in predicted.items() if off_id in off_to_true_fndds}
+
+    n_true = len(off_to_true_fndds)  # distinct OFF items with a genuine known-correct partner
+    n_pred = len(predicted_true_only)
+    n_correct = sum(1 for off_id, fndds_id in predicted_true_only.items() if fndds_id in off_to_true_fndds[off_id])
+
+    precision = n_correct / n_pred if n_pred else 0.0
+    recall = n_correct / n_true if n_true else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+
+    fndds_desc_by_id = dict(zip(fndds_df["unique_id"], fndds_df["description"]))
 
     return {
         "n_holdout_positives": n_true,
@@ -205,6 +374,8 @@ def score_against_holdout(
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        **_category_level_score(predicted_true_only, off_to_true_fndds, fndds_desc_by_id),
+        **_resolvable_ceiling(off_to_true_fndds, fndds_desc_by_id),
     }
 
 
@@ -218,10 +389,14 @@ def _holdout_error_examples(
     if preds.empty or not true_labels:
         return {"false_positives": [], "false_negatives": []}
 
-    # False positives: the model's best-scoring OFF match per FNDDS record, confident
-    # (>= threshold) but NOT the true calibration pair -- the n highest-probability
-    # such mistakes, i.e. what's most urgently over-matching right now.
-    best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_l")
+    # False positives: the model's best-scoring FNDDS match per OFF record (mirrors
+    # production's real selection -- see score_against_holdout's docstring for why this
+    # direction, not per-FNDDS-record, is the one that matters), confident (>=
+    # threshold) but not one of that OFF record's true partner(s) -- the n
+    # highest-probability such mistakes, i.e. what's most urgently over-matching right
+    # now.
+    off_to_true_fndds = _off_to_true_fndds(true_labels)
+    best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_r")
     confident = best[best["match_probability"] >= threshold]
     if confident.empty:
         # DataFrame.apply(axis=1) on an empty frame returns an empty DataFrame, not a
@@ -229,7 +404,9 @@ def _holdout_error_examples(
         # "no false positives" instead.
         false_positives = confident
     else:
-        is_wrong = confident.apply(lambda r: true_labels.get(r["unique_id_l"]) != r["unique_id_r"], axis=1)
+        is_wrong = confident.apply(
+            lambda r: r["unique_id_l"] not in off_to_true_fndds.get(r["unique_id_r"], set()), axis=1
+        )
         false_positives = confident[is_wrong].sort_values("match_probability", ascending=False).head(n)
 
     # False negatives: for every TRUE calibration pair, what score did the model
@@ -244,8 +421,27 @@ def _holdout_error_examples(
     )
     false_negatives = merged[merged["match_probability"] < threshold].sort_values("match_probability").head(n)
 
+    false_positive_records = false_positives[cols].to_dict(orient="records")
+    if false_positive_records:
+        # Tag each false positive with whether it's actually resolvable, or a known
+        # metric artifact no new attribute could ever fix -- verified real case:
+        # "BLACK BEANS" predicted-matched to "BLACK BEANS" at 0.99 confidence, flagged
+        # wrong only because it wasn't the arbitrary fdc_id the holdout happened to
+        # label as truth for that off_code. Without this tag, identify_gap (see
+        # llm/prompts.py's _GAP_SYSTEM) has no way to tell that apart from a genuine
+        # miss like "CADIA REFRIED VEGETARIAN BEANS" vs "Vegetarian Refried Pinto
+        # Beans" (different text, a real gap an attribute could plausibly close), and
+        # can waste a round proposing a new attribute to fix something no keyword rule
+        # ever could. Same collision logic as _resolvable_ceiling, applied per-example
+        # instead of aggregated.
+        fndds_desc_by_id = dict(zip(preds["unique_id_l"], preds["description_l"]))
+        for record in false_positive_records:
+            true_ids = off_to_true_fndds.get(record["unique_id_r"], set())
+            true_descs = {_normalize_text(fndds_desc_by_id[t]) for t in true_ids if t in fndds_desc_by_id}
+            record["same_text_as_true_partner"] = bool(true_descs) and _normalize_text(record["description_l"]) in true_descs
+
     return {
-        "false_positives": false_positives[cols].to_dict(orient="records"),
+        "false_positives": false_positive_records,
         "false_negatives": false_negatives[cols].to_dict(orient="records") if not false_negatives.empty else [],
     }
 
@@ -260,11 +456,17 @@ def holdout_error_examples(
     look like, so the attribute-revision LLM can reason about what new signal would fix
     a real mistake instead of only seeing that mistakes exist in aggregate.
 
-    "false_positives": pairs confidently (>= `threshold`) predicted as a match that
-    are NOT the true calibration pair. "false_negatives": true calibration pairs the
-    model scored below `threshold` for that specific pair. Both capped at `n`,
-    ranked by how confidently wrong (false positives) or how far short of the
-    threshold (false negatives) they are -- the most actionable examples first.
+    "false_positives": each OFF record's best FNDDS match, confidently (>= `threshold`)
+    predicted, that is NOT one of that OFF record's true calibration partner(s) --
+    same per-OFF-record selection production's best_match_per_off actually uses (see
+    score_against_holdout's docstring). Each carries a "same_text_as_true_partner" flag
+    -- True means the predicted (wrong) record's description text is byte-identical to
+    the true partner's, i.e. this is a duplicate-description metric artifact no
+    attribute could ever fix (see _holdout_error_examples), not a real gap.
+    "false_negatives": true calibration pairs the model scored below `threshold` for
+    that specific pair. Both capped at `n`, ranked by how confidently wrong (false
+    positives) or how far short of the threshold (false negatives) they are -- the
+    most actionable examples first.
     """
     _, _, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
     if preds is None:

@@ -114,6 +114,17 @@ def test_identify_gap_returns_none_when_not_needed():
     assert identify_gap(client, "beans", error_examples, [], None, 0.1, [], []) is None
 
 
+def test_identify_gap_forwards_concept_history_into_the_prompt():
+    client = QueueClient([{"needed": False}])
+    error_examples = {"false_positives": [{"a": 1}], "false_negatives": []}
+    concept_history = {
+        "preparation method": [{"name": "beans_preparation", "definition": {"fndds_keywords": ["cooked"]}, "dropped_reason": "collapsed"}]
+    }
+    identify_gap(client, "beans", error_examples, [], None, 0.1, [], [], concept_history)
+    assert "preparation method" in client.calls[0]["user"]
+    assert "collapsed" in client.calls[0]["user"]
+
+
 # -- define_attributes ---------------------------------------------------------------
 
 
@@ -153,12 +164,75 @@ def test_define_attributes_new_from_gap_concept():
     assert new_attr in result
 
 
+def test_define_attributes_attaches_prior_attempts_for_matching_concept():
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    client = QueueClient([{"attributes": [new_attr]}])
+    decisions = {"beans_bean_type": "keep"}
+    concept_history = {
+        "contains molasses": [{"name": "beans_sweetener", "definition": {"fndds_keywords": ["sweet"]}, "dropped_reason": "collapsed"}]
+    }
+    define_attributes(client, "beans", [ATTR_A], decisions, "contains molasses", [], None, None, None, 0.1, concept_history)
+    assert "prior_attempts_for_this_concept" in client.calls[0]["user"]
+    assert "beans_sweetener" in client.calls[0]["user"]
+
+
+def test_define_attributes_no_prior_attempts_for_unrelated_concept():
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    client = QueueClient([{"attributes": [new_attr]}])
+    decisions = {"beans_bean_type": "keep"}
+    concept_history = {"preparation method": [{"name": "beans_preparation", "definition": {}, "dropped_reason": "collapsed"}]}
+    define_attributes(client, "beans", [ATTR_A], decisions, "contains molasses", [], None, None, None, 0.1, concept_history)
+    assert "prior_attempts_for_this_concept" not in client.calls[0]["user"]
+
+
 def test_define_attributes_malformed_definition_filtered_out():
     malformed = {"name": "beans_contains_meat", "kind": "boolean", "description": "broken", "fndds_keywords": [], "off_keywords": []}
     client = QueueClient([{"attributes": [malformed]}])
     decisions = {"beans_contains_meat": "redefine"}
     result = define_attributes(client, "beans", [ATTR_B], decisions, None, [], None, None, None, 0.1)
     assert result == []  # empty keyword lists -> filter_valid_attributes drops it
+
+
+def test_define_attributes_gap_concept_name_collides_with_kept_attribute_is_dropped():
+    # Verified real bug (beans, LLM_DEVICE=databricks): a gap concept's "new" attribute
+    # came back named identically to a kept attribute (near-duplicate content, nothing
+    # to do with the actual gap) and used to survive into the merged list unchecked,
+    # getting silently double-trained by splink.
+    collision = {"name": "beans_contains_meat", "kind": "boolean", "description": "near-duplicate", "fndds_keywords": ["pork"], "off_keywords": ["pork"]}
+    client = QueueClient([{"attributes": [collision]}])
+    decisions = {"beans_bean_type": "keep", "beans_contains_meat": "keep"}
+    result = define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, "specific bean type", [], None, None, None, 0.1)
+    # The kept original survives; the colliding "new" definition is dropped, not duplicated.
+    assert result == [ATTR_A, ATTR_B]
+
+
+def test_define_attributes_gap_concept_can_reuse_a_redefined_names_attribute():
+    # A redefinition is allowed to keep its own name -- only a collision with a KEPT
+    # (unrelated) attribute is the bug being guarded against.
+    redefined = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat v2", "fndds_keywords": ["pork", "bacon"], "off_keywords": ["pork", "bacon"]}
+    client = QueueClient([{"attributes": [redefined]}])
+    decisions = {"beans_bean_type": "keep", "beans_contains_meat": "redefine"}
+    result = define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, None, [], None, None, None, 0.1)
+    assert redefined in result
+    assert ATTR_B not in result
+
+
+def test_define_attributes_llm_duplicate_definitions_keeps_first():
+    dup1 = {"name": "beans_has_molasses", "kind": "boolean", "description": "first", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    dup2 = {"name": "beans_has_molasses", "kind": "boolean", "description": "second", "fndds_keywords": ["treacle"], "off_keywords": ["treacle"]}
+    client = QueueClient([{"attributes": [dup1, dup2]}])
+    decisions = {"beans_bean_type": "keep"}
+    result = define_attributes(client, "beans", [ATTR_A], decisions, "sweetener", [], None, None, None, 0.1)
+    molasses_defs = [a for a in result if a["name"] == "beans_has_molasses"]
+    assert molasses_defs == [dup1]
+
+
+def test_define_attributes_passes_existing_names_to_prompt():
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    client = QueueClient([{"attributes": [new_attr]}])
+    decisions = {"beans_bean_type": "keep"}
+    define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, "contains molasses", [], None, None, None, 0.1)
+    assert "beans_contains_meat" in client.calls[0]["user"]  # existing_attribute_names made it into the prompt
 
 
 # -- revise_attributes (full orchestration) ------------------------------------------
@@ -174,7 +248,7 @@ def test_revise_attributes_full_flow_keep_and_new():
         ]
     )
     error_examples = {"false_positives": [{"a": 1}], "false_negatives": []}
-    attrs, rationale = revise_attributes(
+    attrs, rationale, gap_concept = revise_attributes(
         client,
         "beans",
         [ATTR_A],
@@ -192,6 +266,7 @@ def test_revise_attributes_full_flow_keep_and_new():
     assert ATTR_A in attrs
     assert new_attr in attrs
     assert "contains molasses" in rationale
+    assert gap_concept == "contains molasses"
 
 
 def test_revise_attributes_no_op_rationale_when_nothing_changes():
@@ -201,7 +276,7 @@ def test_revise_attributes_no_op_rationale_when_nothing_changes():
             {"needed": False},
         ]
     )
-    attrs, rationale = revise_attributes(
+    attrs, rationale, gap_concept = revise_attributes(
         client,
         "beans",
         [ATTR_A],
@@ -218,3 +293,4 @@ def test_revise_attributes_no_op_rationale_when_nothing_changes():
     )
     assert attrs == [ATTR_A]
     assert rationale == "kept the attribute set unchanged"
+    assert gap_concept is None

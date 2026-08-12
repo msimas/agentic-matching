@@ -107,15 +107,26 @@ def identify_gap(
     temperature: float,
     fndds_texts: list[Any],
     off_texts: list[Any],
+    concept_history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str | None:
     """Returns a short concept phrase for a new attribute if one's warranted, else
     None. Skipped entirely (no LLM call) when there are no concrete error examples to
     reason from -- the standalone attribute loop (attributes/agent_loop.py) never has
     these, since it never trains a real model; only linking/agent_loop.py's revision
-    calls do."""
+    calls do.
+
+    `concept_history` (linking/agent_loop.py only -- see its docstring there) is every
+    concept identified so far THIS RUN, whatever attribute(s) got defined for it, and
+    why each was auto-dropped once trained -- passed straight through to the prompt so
+    the model can recognize "I already tried this and it failed" itself instead of
+    that recognition depending on string-matching a guidance note (verified real case:
+    the standalone auto_dropped-name guidance note didn't stop "preparation method"
+    from being re-identified 3 rounds running under 3 different attribute names, each
+    auto-dropped in turn -- the concept-level history was real and available, just
+    never actually shown to this specific call)."""
     if not error_examples or not (error_examples.get("false_positives") or error_examples.get("false_negatives")):
         return None
-    sys_p, user_p = build_gap_identification_prompt(block_name, error_examples, existing_attributes, guidance)
+    sys_p, user_p = build_gap_identification_prompt(block_name, error_examples, existing_attributes, guidance, concept_history)
     response = ask_with_followup(client, sys_p, user_p, temperature, fndds_texts, off_texts)
     if response.get("needed") and response.get("concept"):
         return str(response["concept"])
@@ -133,27 +144,69 @@ def define_attributes(
     candidate_terms: list[dict[str, Any]] | None,
     guidance: str | None,
     temperature: float,
+    concept_history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Applies "keep" decisions programmatically (carried forward unchanged, never
     re-emitted by the LLM -- an unchanged attribute has no reason to risk the LLM
     corrupting it, e.g. the verified real case earlier this session where a revision
     dropped an attribute's keywords while only meaning to update its description).
-    Asks the LLM only for "redefine"/new-from-gap definitions -- nothing else."""
+    Asks the LLM only for "redefine"/new-from-gap definitions -- nothing else.
+
+    Guards against a verified real collision (beans, LLM_DEVICE=databricks): the gap
+    concept's "to_define" entry has no name (that's the whole point -- it's asking the
+    LLM to invent one), and the definition call used to have no visibility into which
+    names were already taken. The LLM's "new" attribute for a "specific bean type" gap
+    came back named identically to the kept `beans_contains_meat` (near-duplicate
+    keywords, nothing to do with bean type), and nothing caught it -- both survived
+    into the merged list, and splink silently double-trained that one comparison.
+    Telling the LLM the taken names (build_definition_prompt's existing_names) fixes
+    the common case; the post-hoc filter below is the backstop for when it ignores
+    that anyway -- never trust a single layer for something this cheap to double-check."""
     by_name = {a["name"]: a for a in existing_attributes}
     kept = [by_name[name] for name, action in decisions.items() if action == "keep" and name in by_name]
+    redefine_names = [name for name, action in decisions.items() if action == "redefine" and name in by_name]
     to_define: list[dict[str, Any]] = [
-        {"name": name, "reason": "flagged for redefinition -- see keep/drop decision"}
-        for name, action in decisions.items()
-        if action == "redefine" and name in by_name
+        {"name": name, "reason": "flagged for redefinition -- see keep/drop decision"} for name in redefine_names
     ]
     if gap_concept:
-        to_define.append({"reason": f"new attribute needed: {gap_concept}"})
+        gap_entry = {"reason": f"new attribute needed: {gap_concept}"}
+        prior = (concept_history or {}).get(gap_concept.strip().lower())
+        if prior:
+            # This exact concept was already tried and failed before this run's
+            # definition step gets a chance to repeat the same keyword shape blind --
+            # see revise_attributes' docstring for the verified case this fixes.
+            gap_entry["prior_attempts_for_this_concept"] = prior
+        to_define.append(gap_entry)
     if not to_define:
         return kept
-    sys_p, user_p = build_definition_prompt(block_name, sample_pairs, field_stats, candidate_terms, guidance, to_define)
+    existing_names = [a["name"] for a in existing_attributes]
+    sys_p, user_p = build_definition_prompt(
+        block_name, sample_pairs, field_stats, candidate_terms, guidance, to_define, existing_names
+    )
     response = client.complete_json(sys_p, user_p, temperature=temperature)
     new_defs = filter_valid_attributes(response.get("attributes", []) or [])
-    return kept + new_defs
+
+    kept_names = {a["name"] for a in kept}
+    allowed_new_names = set(redefine_names)  # a redefinition is allowed to keep its name; a gap attribute is not
+    deduped: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for a in new_defs:
+        name = a["name"]
+        if name in kept_names and name not in allowed_new_names:
+            log.warning(
+                "block '%s': LLM's new attribute for gap concept %r collided with kept attribute name %r "
+                "(despite being told it was taken) -- dropping the collision instead of silently duplicating it.",
+                block_name,
+                gap_concept,
+                name,
+            )
+            continue
+        if name in seen_names:
+            log.warning("block '%s': LLM returned duplicate definitions for %r; keeping the first.", block_name, name)
+            continue
+        seen_names.add(name)
+        deduped.append(a)
+    return kept + deduped
 
 
 def revise_attributes(
@@ -171,19 +224,41 @@ def revise_attributes(
     fndds_texts: list[Any],
     off_texts: list[Any],
     temperature: float,
-) -> tuple[list[dict[str, Any]], str]:
-    """Top-level orchestration of the three stages. Returns (attrs, rationale) -- the
-    decomposed flow doesn't produce one "rationale" string the way the old single-call
-    prompt did, so one is synthesized here from the stage decisions, for the same
-    artifact-logging purpose (see attributes/agent_loop.py's AttributeRound.rationale)."""
+    concept_history: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[list[dict[str, Any]], str, str | None]:
+    """Top-level orchestration of the three stages. Returns (attrs, rationale,
+    gap_concept) -- the decomposed flow doesn't produce one "rationale" string the way
+    the old single-call prompt did, so one is synthesized here from the stage
+    decisions, for the same artifact-logging purpose (see attributes/agent_loop.py's
+    AttributeRound.rationale). gap_concept is also returned on its own (not just
+    embedded in the rationale string) so a caller that trains a real model across
+    rounds (linking/agent_loop.py) can track it across rounds to detect thrashing --
+    the same concept being proposed, auto-dropped for no discriminating power, and
+    proposed again under a new attribute name -- without resorting to parsing it back
+    out of the rationale text.
+
+    `concept_history` (see identify_gap's docstring) is forwarded to both identify_gap
+    (so it can recognize a concept it's about to re-propose already failed) and
+    define_attributes (so a redefinition attempt sees exactly what keyword shape
+    already failed for that concept, not just that it should "try something else")."""
     decisions = decide_keep_drop(
         client, block_name, existing_attributes, correlation_flags, evaluation, guidance, temperature, fndds_texts, off_texts
     )
     gap_concept = identify_gap(
-        client, block_name, error_examples, existing_attributes, guidance, temperature, fndds_texts, off_texts
+        client, block_name, error_examples, existing_attributes, guidance, temperature, fndds_texts, off_texts, concept_history
     )
     attrs = define_attributes(
-        client, block_name, existing_attributes, decisions, gap_concept, sample_pairs, field_stats, candidate_terms, guidance, temperature
+        client,
+        block_name,
+        existing_attributes,
+        decisions,
+        gap_concept,
+        sample_pairs,
+        field_stats,
+        candidate_terms,
+        guidance,
+        temperature,
+        concept_history,
     )
     dropped = [n for n, a in decisions.items() if a == "drop"]
     redefined = [n for n, a in decisions.items() if a == "redefine"]
@@ -196,4 +271,4 @@ def revise_attributes(
         rationale_parts.append(f"added new attribute for: {gap_concept}")
     rationale = "; ".join(rationale_parts) or "kept the attribute set unchanged"
     log.info("block '%s': decomposed revision -- %s", block_name, rationale)
-    return attrs, rationale
+    return attrs, rationale, gap_concept

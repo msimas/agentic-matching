@@ -243,3 +243,59 @@ def test_original_settings_not_mutated_by_damping():
     original = copy.deepcopy(settings)
     dampen_description_weight(settings, damping=0.0)
     assert settings == original
+
+
+# -- untrained comparison (m_probability/u_probability missing) -- real verified crash --
+
+
+def test_apply_nutrition_priors_untrained_attribute_does_not_crash():
+    # Verified real crash (beans, LLM_DEVICE=databricks): EM doesn't always fully
+    # train every comparison every round ("no m values are trained" is a real, valid
+    # splink outcome) -- exact_level["m_probability"] can be missing, and a plain
+    # dict[...] access raised KeyError, taking down the whole round.
+    settings = {
+        "comparisons": [
+            {
+                "output_column_name": "beans_contains_meat",
+                "comparison_levels": [
+                    {"is_null_level": True},
+                    {"sql_condition": "exact"},  # no m_probability/u_probability keys at all
+                    {"sql_condition": "else"},
+                ],
+            }
+        ]
+    }
+    attrs = [{"name": "beans_contains_meat", "description": "contains meat"}]
+    result = apply_nutrition_priors(settings, attrs, [{"attribute": "beans_contains_meat", "n_true_pairs": 500}])
+    exact = result["comparisons"][0]["comparison_levels"][1]
+    # No EM estimate to blend with -> trust the prior alone.
+    assert exact["m_probability"] == pytest.approx(NUTRIENT_DENSE_PRIOR[0])
+    assert exact["u_probability"] == pytest.approx(NUTRIENT_DENSE_PRIOR[1])
+
+
+def test_apply_nutrition_priors_untrained_with_none_values_does_not_crash():
+    settings = _settings_with_comparison("beans_contains_meat", 0.5, 0.5)
+    settings["comparisons"][0]["comparison_levels"][1]["m_probability"] = None
+    attrs = [{"name": "beans_contains_meat", "description": "contains meat"}]
+    result = apply_nutrition_priors(settings, attrs, [{"attribute": "beans_contains_meat", "n_true_pairs": 500}])
+    exact = result["comparisons"][0]["comparison_levels"][1]
+    assert exact["m_probability"] == pytest.approx(NUTRIENT_DENSE_PRIOR[0])
+
+
+def test_dampen_description_weight_untrained_level_left_undamped():
+    settings = {
+        "comparisons": [
+            {
+                "output_column_name": "description",
+                "comparison_levels": [
+                    {"is_null_level": True},
+                    {"label_for_charts": "untrained level"},  # no m/u keys
+                    {"label_for_charts": "trained level", "m_probability": 0.9, "u_probability": 0.1},
+                ],
+            }
+        ]
+    }
+    result = dampen_description_weight(settings, damping=0.0)
+    levels = result["comparisons"][0]["comparison_levels"]
+    assert "m_probability" not in levels[1]  # untouched, not crashed
+    assert levels[2]["m_probability"] == pytest.approx(0.1)  # trained level still damped normally

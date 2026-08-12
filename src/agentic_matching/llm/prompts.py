@@ -305,13 +305,36 @@ redefining an existing one's keywords; here you only decide "keep" / "drop" / \
 
 You will be shown "existing_attributes" (the current set), "correlation_flags" (a \
 Cramer's V report flagging attribute pairs that are too correlated -- one of a \
-correlated pair should usually be dropped or merged), and "evaluation" (aggregate \
-precision/recall/f1, and "attribute_discriminative_power": each attribute's \
-agreement rate on known-true pairs vs. random non-match pairs -- an attribute \
-agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, isn't \
-discriminating matches from non-matches at all and is a strong drop/redefine \
-candidate; a big gap, e.g. true=0.95/decoy=0.12, means it's doing real work and \
-should be kept as-is).
+correlated pair should usually be dropped or merged), and "evaluation":
+  - "precision"/"recall"/"f1": exact-id accuracy against the calibration holdout -- \
+    strict (only the literal gold record counts), and NOT close to what a working \
+    attribute set can actually reach on this holdout (see max_achievable_f1 below), so \
+    do not read a low f1 alone as "everything here is broken."
+  - "category_precision"/"category_recall"/"category_f1": the SAME predictions, but \
+    counting a match "correct" when the predicted record's description text matches a \
+    true partner's, even if the specific id differs -- this reflects whether the \
+    pipeline's real job (attaching a nutritionally-equivalent record) is being done, \
+    and is a better signal of genuine attribute quality than exact-id f1 alone.
+  - "max_achievable_precision"/"recall"/"f1" with "n_resolvable"/"n_ambiguous": the \
+    ceiling THIS holdout sample's own duplicate-description structure allows for \
+    exact-id f1 -- many product descriptions repeat verbatim across different true \
+    pairs, so even a flawless attribute set cannot exceed this ceiling (commonly well \
+    under 1.0). Judge whether f1 is closing the gap toward max_achievable_f1, not \
+    toward 1.0.
+  - "attribute_discriminative_power": each attribute's agreement rate on known-true \
+    pairs vs. random non-match pairs -- an attribute agreeing at nearly the same rate \
+    on both, e.g. true=0.90/decoy=0.88, isn't discriminating matches from non-matches \
+    at all and is a strong drop/redefine candidate; a big gap, e.g. true=0.95/ \
+    decoy=0.12, means it's doing real work and should be kept as-is. This is the most \
+    attribute-specific signal here -- weight it over the aggregate numbers above when \
+    they disagree about one particular attribute.
+  - "best_round_so_far" (absent if the current round IS the best one): the round \
+    number, f1, category_f1, and attribute names of the best-scoring round THIS RUN \
+    has produced. If the current round's f1 is below it, that means recent changes \
+    have been moving AWAY from what worked, not toward something better -- treat that \
+    as a signal to converge back toward best_round_so_far's attribute set (e.g. keep \
+    what it kept, undo a recent drop/redefine) rather than continuing to explore in a \
+    new direction on top of a regression.
 
 Reply with ONLY a JSON object:
 {
@@ -358,6 +381,32 @@ false positive's two descriptions actually DIFFER on that no existing attribute 
 captures, and what a false negative's two descriptions actually SHARE that no \
 existing attribute credits them for.
 
+Each false_positive carries "same_text_as_true_partner": true means the predicted \
+(wrong) record's description text is BYTE-IDENTICAL to the true partner's -- the \
+model matched two records that read the same, and is only "wrong" because the \
+calibration holdout happened to label a different, textually-indistinguishable record \
+as the true one. No new attribute can ever fix that (there is nothing in the text for \
+one to key off), so DO NOT use these to justify "needed": true -- if every \
+false_positive shown has this flag set, the answer is almost certainly "needed": \
+false, no matter how many examples there are. Reserve "needed": true for cases where \
+the descriptions genuinely differ (same_text_as_true_partner is false or absent) or \
+for a false_negative pattern.
+
+You may also be shown "concept_history": every concept already identified as needed \
+EARLIER THIS RUN, the attribute name(s) defined for it, and why each was \
+auto-dropped once actually trained ("collapsed" = agreeing on it was no more common \
+among true matches than random pairs -- no signal; "label_switching" = true matches \
+agreed on it LESS than random pairs did -- actively anti-correlated, worse than no \
+signal; "untrained" = EM never got enough data to estimate it at all). Before \
+proposing a concept, check whether it's already in concept_history. If it matches (or \
+is a close variant of, e.g. "preparation method" vs "refried status") a concept that \
+already failed there, do not just re-propose it under a new name expecting a \
+different outcome -- either explain concretely why THIS TIME's evidence points to a \
+fundamentally different signal than what was tried (not just different keywords for \
+the same underlying idea), or answer "needed": false. Repeating a proven-failed \
+concept a third or fourth time under yet another name is exactly the failure mode this \
+field exists to stop.
+
 Reply with ONLY a JSON object:
 {
   "needed": true or false,
@@ -374,6 +423,7 @@ def build_gap_identification_prompt(
     error_examples: dict[str, list[dict[str, Any]]],
     existing_attributes: list[dict[str, Any]],
     guidance: str | None,
+    concept_history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[str, str]:
     payload: dict[str, Any] = {
         "block_name": block_name,
@@ -382,6 +432,8 @@ def build_gap_identification_prompt(
     }
     if guidance:
         payload["domain_guidance"] = guidance
+    if concept_history:
+        payload["concept_history"] = concept_history
     return _GAP_SYSTEM, json.dumps(payload, indent=2, default=str)
 
 
@@ -402,6 +454,23 @@ categorical attribute values in these), and "candidate_terms" (may be absent: to
 mined from this block's own text that split its population meaningfully -- a floor, \
 not a ceiling; your own domain knowledge, including synonyms/translations pure \
 frequency counting can't find, may suggest better keywords).
+
+"existing_attribute_names" lists every attribute name already in use this round \
+(including ones you're not redefining). A "to_define" entry with no "name" is asking \
+for a genuinely NEW attribute -- its name MUST NOT be one of existing_attribute_names; \
+if the concept you'd define is really just an existing attribute, that's a sign no new \
+attribute is needed here, not a reason to reuse its name.
+
+A "to_define" entry may carry "prior_attempts_for_this_concept": earlier attribute \
+definition(s) already tried THIS RUN for this exact concept, and why each was \
+auto-dropped once trained ("collapsed" = no discriminating power; "label_switching" = \
+actively anti-correlated with matching, worse than no signal; "untrained" = never got \
+enough data to estimate). If shown, do NOT propose keywords with the same shape as a \
+prior failed attempt (e.g. a near-synonym list covering the same cases) -- that will \
+fail the same way. Either take a meaningfully different angle (broader/narrower \
+criteria, a different observable signal entirely) or, if you can't identify what would \
+actually be different, define it anyway but keep the definition minimal rather than \
+elaborating on a failed approach.
 
 Reply with ONLY a JSON object:
 {
@@ -427,11 +496,13 @@ def build_definition_prompt(
     candidate_terms: list[dict[str, Any]] | None,
     guidance: str | None,
     to_define: list[dict[str, Any]],
+    existing_names: list[str] | None = None,
 ) -> tuple[str, str]:
     payload: dict[str, Any] = {
         "block_name": block_name,
         "sample_candidate_pairs": sample_pairs[:30],
         "to_define": to_define,
+        "existing_attribute_names": existing_names or [],
     }
     if guidance:
         payload["domain_guidance"] = guidance

@@ -25,6 +25,10 @@ def main(
         typer.echo(
             f"round {r.round}: degeneracy_flags={len(r.degeneracy_flags)} "
             f"precision={ev.get('precision')} recall={ev.get('recall')} f1={ev.get('f1')} "
+            f"(category: precision={ev.get('category_precision')} recall={ev.get('category_recall')} "
+            f"f1={ev.get('category_f1')}) "
+            f"(ceiling: max_achievable_f1={ev.get('max_achievable_f1')} "
+            f"resolvable={ev.get('n_resolvable')} ambiguous={ev.get('n_ambiguous')}) "
             f"n_pairs={r.plausibility.get('n_pairs')} -> {r.matches_csv}"
         )
     if rounds:

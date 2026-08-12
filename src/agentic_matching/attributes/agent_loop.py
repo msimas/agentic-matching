@@ -26,7 +26,7 @@ import pandas as pd
 
 from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.revision import revise_attributes
-from agentic_matching.attributes.rules import compute_attribute_values, filter_valid_attributes
+from agentic_matching.attributes.rules import attribute_set_signature, compute_attribute_values, filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
 from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings, round_temperature
@@ -254,7 +254,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
                 # Decomposed revision (see attributes/revision.py) -- this loop has no
                 # trained-model evaluation/error_examples (it never trains a real
                 # linker), only correlation_flags.
-                attrs, rationale = revise_attributes(
+                attrs, rationale, _gap_concept = revise_attributes(
                     client,
                     block_name,
                     existing,
@@ -299,9 +299,12 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
         )
         _write_artifact(block_name, rounds[-1])
 
-        names = {a["name"] for a in attrs}
-        prev_names = {a["name"] for a in existing} if existing else None
-        if not correlation_flags and prev_names == names:
+        # Content-sensitive, not name-only (see attribute_set_signature's docstring
+        # for the real case a name-only check missed: a "redefine" that keeps an
+        # attribute's name but changes its keywords looks like "no change" under a
+        # name-only comparison, incorrectly stopping the loop on a real revision).
+        prev_signature = attribute_set_signature(existing) if existing else None
+        if not correlation_flags and prev_signature == attribute_set_signature(attrs):
             log.info("Attribute loop for '%s' stabilized after round %d", block_name, round_idx)
             break
         existing = attrs

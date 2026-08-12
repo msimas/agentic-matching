@@ -29,6 +29,7 @@ from agentic_matching.attributes.agent_loop import (
 )
 from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.revision import revise_attributes
+from agentic_matching.attributes.rules import attribute_set_signature, filter_reintroduced_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings, round_temperature
 from agentic_matching.linking import splink_model
@@ -253,6 +254,36 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
     # exact same non-discriminating attribute right back, and also used to filter its
     # response defensively in case it does anyway.
     auto_dropped: list[str] = []
+    # Thrashing detection: auto_dropped (above) only catches exact name reuse, but the
+    # LLM can retry the same underlying idea under a *different* attribute name every
+    # time -- each definition call invents its own snake_case name for a gap concept
+    # (see revision.py's define_attributes), so a rejected concept has no name to be
+    # recognized by next round. Verified real case (beans, LLM_DEVICE=databricks): a
+    # "preparation method" gap concept was proposed 3 times across rounds 3-5 (as
+    # beans_preparation, then twice more), auto-dropped every time for zero
+    # discriminating power, burning 2 of a 6-round budget on an idea already disproven
+    # in its first attempt. Maps normalized gap_concept -> every attribute name tried
+    # for it so far this run, so we can tell "tried, dropped, tried again" apart from
+    # "tried once."
+    concept_attempts: dict[str, list[str]] = {}
+    # Full attribute definitions ever seen this run, keyed by name -- lets concept_history
+    # (below) show the LLM exactly what keyword shape it already tried for a concept,
+    # not just that something with that name failed. Seeded with the starting
+    # attributes so a redefinition of one of THOSE is also traceable.
+    attempted_definitions: dict[str, dict[str, Any]] = {a["name"]: a for a in attrs}
+    # Why each auto-dropped attribute failed (degenerate_attribute_columns' `kind`),
+    # keyed by name -- paired with concept_attempts/attempted_definitions to build
+    # concept_history for the next revision call (see revision.py's identify_gap/
+    # define_attributes docstrings for why this is structured payload now, not just a
+    # guidance string: the prose thrashing note below didn't stop "preparation method"
+    # from being re-identified 3 rounds running in the run that motivated this).
+    drop_reasons: dict[str, str] = {}
+    # The exact definition each auto-dropped attribute HAD at the moment it was
+    # dropped, keyed by name -- captured here rather than reused from
+    # attempted_definitions because that dict gets overwritten with each round's latest
+    # proposal, while this needs to stay frozen at drop time for the reintroduced-name
+    # guard below to compare against.
+    dropped_definitions: dict[str, dict[str, Any]] = {}
 
     for round_idx in range(agent_loop_settings.max_rounds):
         round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
@@ -291,6 +322,8 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 kinds_by_name,
                 round_idx,
             )
+            drop_reasons.update(kinds_by_name)
+            dropped_definitions.update({a["name"]: a for a in attrs if a["name"] in degenerate})
             dropped_this_round.extend(degenerate)
             attrs = [a for a in attrs if a["name"] not in degenerate]
             round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
@@ -307,13 +340,23 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         error_examples = round_result.holdout_error_examples
         cur_f1 = holdout_eval.get("f1")
         log.info(
-            "block=%s round=%d degeneracy_flags=%d holdout_precision=%s holdout_recall=%s holdout_f1=%s",
+            "block=%s round=%d degeneracy_flags=%d holdout_precision=%s holdout_recall=%s holdout_f1=%s "
+            "(category_precision=%s category_recall=%s category_f1=%s -- see score_against_holdout's "
+            "docstring for why exact-UPC and category-level numbers can diverge this much) "
+            "(max_achievable_f1=%s given %s resolvable / %s ambiguous true OFF items in this sample -- "
+            "see _resolvable_ceiling's docstring for what caps this below 1.0)",
             block_name,
             round_idx,
             len(degeneracy_flags),
             holdout_eval.get("precision"),
             holdout_eval.get("recall"),
             cur_f1,
+            holdout_eval.get("category_precision"),
+            holdout_eval.get("category_recall"),
+            holdout_eval.get("category_f1"),
+            holdout_eval.get("max_achievable_f1"),
+            holdout_eval.get("n_resolvable"),
+            holdout_eval.get("n_ambiguous"),
         )
 
         if round_idx == agent_loop_settings.max_rounds - 1:
@@ -334,6 +377,24 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), off_df)
         correlation_flags = check_correlations(values_df)
         evaluation: dict[str, Any] = {**holdout_eval, "attribute_discriminative_power": discriminative_power}
+        # best_round_so_far -- reuses select_best_round (the same (not collapsed, no
+        # degeneracy, f1) priority the END of this loop uses to pick the actual
+        # deliverable, see its docstring) so the revision call gets that same
+        # trajectory awareness DURING the loop, not only after it's over. Verified
+        # real gap this closes (beans, LLM_DEVICE=databricks): round 2 was this run's
+        # best (f1=0.065); rounds 3-5 kept revising forward with strictly worse f1 each
+        # time, with nothing telling the LLM it had drifted past its own best result
+        # until the outer regression-revert discarded 3 rounds' worth of exploration
+        # after the fact. Only worth mentioning when it's NOT the round currently being
+        # evaluated -- no signal in "the best round so far is this one."
+        best_so_far = select_best_round(rounds)
+        if best_so_far.round != round_idx:
+            evaluation["best_round_so_far"] = {
+                "round": best_so_far.round,
+                "f1": best_so_far.holdout_evaluation.get("f1"),
+                "category_f1": best_so_far.holdout_evaluation.get("category_f1"),
+                "attribute_names": [a["name"] for a in best_so_far.attributes],
+            }
         guidance = get_seed_attribute_notes(block_name)
         if auto_dropped:
             note = (
@@ -342,6 +403,39 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 f"discriminating power in a trained model: {auto_dropped}."
             )
             guidance = f"{guidance}\n\n{note}" if guidance else note
+        thrashing = {
+            concept: names for concept, names in concept_attempts.items() if sum(n in auto_dropped for n in names) >= 2
+        }
+        if thrashing:
+            tried = "; ".join(f"{concept!r} (tried as {names})" for concept, names in thrashing.items())
+            note = (
+                "You have repeatedly proposed a new attribute for the same underlying "
+                "concept, each time under a different name, and every one of them was "
+                f"auto-dropped for zero discriminating power once trained: {tried}. This "
+                "is not a naming problem -- do not propose this concept again in any "
+                "keyword-based form this run; if it matters, it needs a fundamentally "
+                "different signal, not another rename of the same keywords."
+            )
+            guidance = f"{guidance}\n\n{note}" if guidance else note
+        # Structured version of the same "already tried this" information above -- see
+        # revision.py's identify_gap/define_attributes docstrings. Only includes
+        # concepts with at least one attempt that actually got auto-dropped (a concept
+        # still under evaluation, not yet proven to fail, has nothing to report here).
+        concept_history: dict[str, list[dict[str, Any]]] = {}
+        for concept, names in concept_attempts.items():
+            entries = [
+                {
+                    "name": name,
+                    "definition": {
+                        k: v for k, v in attempted_definitions.get(name, {}).items() if k in ("fndds_keywords", "off_keywords", "categories")
+                    },
+                    "dropped_reason": drop_reasons[name],
+                }
+                for name in names
+                if name in drop_reasons
+            ]
+            if entries:
+                concept_history[concept] = entries
         # has_prior_state=True unconditionally -- unlike blocking/attributes' round 0,
         # this loop never lacks prior state: it always starts from an already-persisted
         # attribute set (see load_latest_attributes above), so every round here has
@@ -356,7 +450,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             temperature,
         )
         try:
-            new_attrs, revision_rationale = revise_attributes(
+            new_attrs, revision_rationale, gap_concept = revise_attributes(
                 client,
                 block_name,
                 attrs,
@@ -370,8 +464,19 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 fndds_texts=raw_fndds_df["description"].tolist(),
                 off_texts=raw_off_df["search_text"].tolist(),
                 temperature=temperature,
+                concept_history=concept_history or None,
             )
             log.info("block '%s' round %d: %s", block_name, round_idx, revision_rationale)
+            for a in new_attrs:
+                attempted_definitions[a["name"]] = a
+            if gap_concept:
+                # Whichever name(s) in new_attrs didn't already exist in attrs came
+                # from this gap concept (a redefine/keep can't introduce a new name --
+                # see define_attributes) -- record them against the concept so a later
+                # round can recognize "same idea, new name" (see concept_attempts above).
+                new_from_gap = [a["name"] for a in new_attrs if a["name"] not in {x["name"] for x in attrs}]
+                if new_from_gap:
+                    concept_attempts.setdefault(gap_concept.strip().lower(), []).extend(new_from_gap)
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: this round's own
             # training/evaluation already succeeded and is already appended to `rounds`
@@ -385,22 +490,31 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             )
             break
         if auto_dropped:
-            # Defensive backstop against the LLM re-proposing an attribute already
-            # proven non-discriminating this run, despite the evaluation payload
-            # telling it not to (see `auto_dropped_attributes` above) -- the retrain
-            # loop next round would just drop it again anyway, so save that wasted
-            # round here instead.
-            reintroduced = [a["name"] for a in new_attrs if a["name"] in auto_dropped]
-            if reintroduced:
+            # See filter_reintroduced_attributes' docstring for the verified real
+            # regression a name-only version of this guard caused.
+            new_attrs, same_as_before, reintroduced_new_definition = filter_reintroduced_attributes(
+                new_attrs, auto_dropped, dropped_definitions
+            )
+            if same_as_before:
                 log.warning(
                     "block '%s' round %d: LLM re-proposed already-dropped attribute(s) "
-                    "%s despite being told not to; filtering them out again.",
+                    "%s with the SAME definition that already failed; filtering them "
+                    "out again.",
                     block_name,
                     round_idx,
-                    reintroduced,
+                    same_as_before,
                 )
-                new_attrs = [a for a in new_attrs if a["name"] not in auto_dropped]
-        if {a["name"] for a in new_attrs} == {a["name"] for a in attrs}:
+            if reintroduced_new_definition:
+                log.info(
+                    "block '%s' round %d: LLM re-proposed previously-dropped "
+                    "attribute(s) %s under the same name but with a DIFFERENT "
+                    "definition -- letting it retrain and be judged fresh instead of "
+                    "blocking it purely by name.",
+                    block_name,
+                    round_idx,
+                    reintroduced_new_definition,
+                )
+        if attribute_set_signature(new_attrs) == attribute_set_signature(attrs):
             log.info("LLM proposed no attribute changes for '%s'; stopping.", block_name)
             attrs = new_attrs
             break

@@ -14,6 +14,7 @@ comparison construction stay consistent.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Literal
 
@@ -101,3 +102,58 @@ def compute_attribute_values(
     """Vectorized (well, list-comprehension) computation of every attribute for a list
     of records' text on one side. Returns {attribute_name: [values...]}."""
     return {attr["name"]: [apply_attribute(attr, t, side) for t in texts] for attr in attrs}
+
+
+def attribute_set_signature(attrs: list[dict[str, Any]]) -> frozenset[str]:
+    """A content-sensitive fingerprint of an attribute set, for "did anything actually
+    change" checks -- comparing only `{a["name"] for a in attrs}` (as both agent loops
+    used to) is wrong: a "redefine" that keeps an attribute's NAME but changes its
+    keywords/categories looks identical under a name-only comparison, so the loop
+    reports "no changes" and stops even though real content changed. Verified real
+    case (beans, LLM_DEVICE=databricks, decomposed revision -- see attributes/
+    revision.py): a round that redefined beans_bean_type's and beans_preparation_
+    method's keywords (same names, new content) was logged as "LLM proposed no
+    attribute changes" and stopped the loop after round 0, discarding a real
+    revision. Order-independent (a set of per-attribute signatures, not a single
+    signature of the whole list) since attribute order was never meaningful."""
+    return frozenset(json.dumps(a, sort_keys=True, default=str) for a in attrs)
+
+
+def filter_reintroduced_attributes(
+    new_attrs: list[dict[str, Any]], auto_dropped: list[str], dropped_definitions: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Backstop against an LLM re-proposing an attribute name already proven
+    non-discriminating this run -- content-aware, not name-only, for the same reason
+    attribute_set_signature (above) isn't name-only: comparing purely by name silently
+    discards a genuinely DIFFERENT redefinition just because it reused a burned name.
+
+    Verified real case (beans, LLM_DEVICE=databricks): a gap-identification call
+    correctly re-identified a "preparation method" gap (now with concept_history
+    explaining what failed before -- see attributes/revision.py), the definition step
+    proposed a fresh `beans_preparation_method` definition for it, and a name-only
+    filter threw it away unseen purely because that name had failed once before -- in
+    the same round `beans_bean_type` was also dropped with nothing replacing it,
+    collapsing the round to 2 weak attributes and cratering recall (candidate pairs
+    18,743 -> 2,409).
+
+    `dropped_definitions` maps a name to the exact attribute dict it had AT THE MOMENT
+    it was auto-dropped (the caller must capture this at drop time, before any later
+    round's proposals overwrite what that name currently means). Only a reintroduction
+    matching that frozen definition exactly is filtered; anything else -- a real
+    redefinition reusing the name -- passes through to be retrained and judged on its
+    own merits, same as any other new attribute (the caller's own retrain-on-collapse
+    loop still catches it if it's still bad, at the cost of one round -- just no longer
+    pre-judged unseen).
+
+    Returns (filtered_new_attrs, same_as_before_names, new_definition_names) -- the
+    caller logs the two name lists differently (a real problem vs. an FYI)."""
+    same_as_before = [
+        a["name"]
+        for a in new_attrs
+        if a["name"] in auto_dropped
+        and a["name"] in dropped_definitions
+        and attribute_set_signature([a]) == attribute_set_signature([dropped_definitions[a["name"]]])
+    ]
+    filtered = [a for a in new_attrs if a["name"] not in same_as_before]
+    reintroduced_new_definition = [a["name"] for a in filtered if a["name"] in auto_dropped]
+    return filtered, same_as_before, reintroduced_new_definition

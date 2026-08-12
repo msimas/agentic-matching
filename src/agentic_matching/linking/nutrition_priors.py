@@ -193,15 +193,30 @@ def apply_nutrition_priors(
             )
             continue
         exact_level, else_level = levels
-        n_true = n_true_by_attr.get(name, 0)
-        m, u = _blend(exact_level["m_probability"], exact_level["u_probability"], n_true, prior)
+        # EM doesn't always fully train every comparison every round (e.g. a column
+        # blocked-on this round's EM pass, or too little data in a small/sparse
+        # round -- "not yet fully trained... no m values are trained" is a real,
+        # valid splink outcome, not an error) -- exact_level["m_probability"] can then
+        # be missing or None. Verified real crash (beans, LLM_DEVICE=databricks):
+        # beans_contains_meat went untrained one round and this raised KeyError,
+        # taking down the whole round instead of just skipping the blend for that one
+        # attribute. Treat "no EM estimate to blend with" the same as "no data" --
+        # trust the prior alone (n_true=0), rather than crash or silently skip the
+        # nutrition-significant attribute entirely.
+        m_raw, u_raw = exact_level.get("m_probability"), exact_level.get("u_probability")
+        untrained = m_raw is None or u_raw is None
+        n_true = 0 if untrained else n_true_by_attr.get(name, 0)
+        m_data = prior[0] if untrained else m_raw
+        u_data = prior[1] if untrained else u_raw
+        m, u = _blend(m_data, u_data, n_true, prior)
         log.info(
-            "block attribute '%s' (%s): blending EM estimate (m=%.3f u=%.3f, n_true_pairs=%d) "
+            "block attribute '%s' (%s): blending EM estimate (m=%s u=%s%s, n_true_pairs=%d) "
             "toward nutrition prior (m=%.2f u=%.2f) -> m=%.3f u=%.3f",
             name,
             group,
-            exact_level["m_probability"],
-            exact_level["u_probability"],
+            m_raw,
+            u_raw,
+            " -- UNTRAINED this round, using the prior alone" if untrained else "",
             n_true,
             prior[0],
             prior[1],
@@ -237,7 +252,20 @@ def dampen_description_weight(
         for level in comparison.get("comparison_levels", []):
             if level.get("is_null_level"):
                 continue
-            m_data, u_data = level["m_probability"], level["u_probability"]
+            m_data, u_data = level.get("m_probability"), level.get("u_probability")
+            if m_data is None or u_data is None:
+                # EM doesn't always fully train every comparison every round -- see
+                # apply_nutrition_priors' identical guard (and the real crash it
+                # fixes) for why this can legitimately happen. No prior to fall back
+                # on for description (unlike a nutrition-significant attribute), so
+                # just leave this level untouched rather than guessing.
+                log.warning(
+                    "description level %r untrained this round (m=%s u=%s); leaving undamped.",
+                    level.get("label_for_charts", level.get("sql_condition")),
+                    m_data,
+                    u_data,
+                )
+                continue
             level["m_probability"] = damping * m_data + (1 - damping) * u_data
             log.info(
                 "description level %r: damping m=%.3f toward u=%.3f (damping=%.2f) -> m=%.3f",
