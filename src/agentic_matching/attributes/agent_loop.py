@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 
 from agentic_matching.attributes.metrics import check_correlations
+from agentic_matching.attributes.revision import revise_attributes
 from agentic_matching.attributes.rules import compute_attribute_values, filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
@@ -216,35 +217,58 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
     sample_pairs = _sample_pairs(fndds_df, off_df)
     field_stats = _field_stats(fndds_df, off_df)
     candidate_terms = _candidate_boolean_terms(fndds_df, off_df, block_name)
+    # For info_requests.py's "need more info" fulfillment (see attributes/revision.py)
+    # -- plain text already loaded for this round, no extra query capability needed.
+    fndds_texts = fndds_df["description"].tolist()
+    off_texts = off_df["search_text"].tolist()
 
     rounds: list[AttributeRound] = []
     existing = get_seed_attributes(block_name)
     guidance = get_seed_attribute_notes(block_name)
     correlation_flags: list[dict[str, Any]] = []
-    evaluation = None
 
     for round_idx in range(agent_loop_settings.max_rounds):
-        sys_p, user_p = build_attribute_prompt(
-            block_name,
-            sample_pairs,
-            existing_attributes=existing,
-            correlation_flags=correlation_flags or None,
-            evaluation=evaluation,
-            field_stats=field_stats,
-            candidate_terms=candidate_terms,
-            guidance=guidance,
-        )
         temperature = round_temperature(round_idx, has_prior_state=existing is not None)
         log.info(
             "Generating matching attributes for '%s' round %d: asking the LLM to %s matching attributes (temperature=%.2f)",
             block_name,
             round_idx,
-            "propose" if round_idx == 0 else "revise",
+            "propose" if existing is None else "revise",
             temperature,
         )
         try:
-            response = client.complete_json(sys_p, user_p, temperature=temperature)
-            attrs = filter_valid_attributes(response["attributes"])
+            if existing is None:
+                # Nothing to keep/drop/gap-fill yet -- the single "propose from
+                # scratch" call (unchanged from before the decomposed-revision work).
+                sys_p, user_p = build_attribute_prompt(
+                    block_name,
+                    sample_pairs,
+                    field_stats=field_stats,
+                    candidate_terms=candidate_terms,
+                    guidance=guidance,
+                )
+                response = client.complete_json(sys_p, user_p, temperature=temperature)
+                attrs = filter_valid_attributes(response["attributes"])
+                rationale = response.get("rationale", "")
+            else:
+                # Decomposed revision (see attributes/revision.py) -- this loop has no
+                # trained-model evaluation/error_examples (it never trains a real
+                # linker), only correlation_flags.
+                attrs, rationale = revise_attributes(
+                    client,
+                    block_name,
+                    existing,
+                    correlation_flags=correlation_flags or None,
+                    evaluation=None,
+                    error_examples=None,
+                    sample_pairs=sample_pairs,
+                    field_stats=field_stats,
+                    candidate_terms=candidate_terms,
+                    guidance=guidance,
+                    fndds_texts=fndds_texts,
+                    off_texts=off_texts,
+                    temperature=temperature,
+                )
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: a real LLM
             # backend can fail a round outright, and rounds already completed (and
@@ -266,7 +290,6 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
                 _persist_generated(block_name, existing, version=0)
                 return rounds
             raise
-        rationale = response.get("rationale", "")
 
         values_df = _pooled_values(attrs, fndds_df, off_df)
         correlation_flags = check_correlations(values_df)

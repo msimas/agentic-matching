@@ -146,9 +146,12 @@ def build_blocking_prompt(
 # ---------------------------------------------------------------------------
 
 _ATTRIBUTE_SYSTEM = """\
-You are a subject-matter-expert-in-the-loop assistant proposing MATCHING ATTRIBUTES for \
-probabilistic record linkage (Fellegi-Sunter / splink) between USDA FNDDS records and \
-Open Food Facts (OFF) records within a single product block.
+You are a subject-matter-expert-in-the-loop assistant proposing an INITIAL set of \
+MATCHING ATTRIBUTES, from scratch, for probabilistic record linkage (Fellegi-Sunter \
+/ splink) between USDA FNDDS records and Open Food Facts (OFF) records within a \
+single product block. (Revising an existing set is a separate, later step handled by \
+a different prompt -- see attributes/revision.py -- so everything here is about a \
+first proposal only.)
 
 A matching attribute is a derived boolean or categorical field, computed independently \
 on each side from its own text fields, that should agree for true matches and disagree \
@@ -192,28 +195,6 @@ You will be shown:
     that matches must agree on which specific sub-concept is involved, not just some \
     shared general property) -- treat it as authoritative and let it directly shape \
     which attributes you propose, alongside everything else you're shown.
-  - On revision rounds, "existing_attributes" (the current set), "correlation_flags" \
-    (a Cramer's V report flagging attribute pairs that are too correlated -- drop or \
-    redefine them), and "previous_round_evaluation" (linkage results, including):
-      - "attribute_discriminative_power": each existing attribute's agreement rate on \
-        known-true pairs vs. random non-match pairs from a calibration sample -- an \
-        attribute agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, \
-        isn't discriminating matches from non-matches at all and is a strong \
-        drop/redefine candidate regardless of how it correlates with other attributes; \
-        a big gap, e.g. true=0.95/decoy=0.12, means it's doing real work and should be \
-        kept.
-      - "false_positives"/"false_negatives": concrete example PAIRS (with both sides' \
-        description text) the current attribute set got wrong on the calibration \
-        sample -- a false positive is a pair confidently predicted as a match that \
-        isn't the true one; a false negative is a true pair the model scored too low. \
-        This is where a genuinely NEW attribute idea should come from: look at what a \
-        false-positive pair's two descriptions actually differ on that no existing \
-        attribute captures (propose an attribute for that), and what a false-negative \
-        pair's two descriptions actually share that no existing attribute credits them \
-        for (the current attributes may be too narrow/keyword-specific to catch it). \
-        Aggregate numbers alone (attribute_discriminative_power, precision/recall/f1) \
-        can tell you an attribute is weak; these examples are what let you reason \
-        about what to add instead of only what to remove.
 
 Reply with ONLY a JSON object matching this SHAPE (this example's names/keywords are \
 placeholders illustrating the schema for an unrelated example block, "widgets" -- do \
@@ -249,13 +230,14 @@ above, not copied from this template):
 def build_attribute_prompt(
     block_name: str,
     sample_pairs: list[dict[str, Any]],
-    existing_attributes: list[dict[str, Any]] | None = None,
-    correlation_flags: list[dict[str, Any]] | None = None,
-    evaluation: dict[str, Any] | None = None,
     field_stats: dict[str, Any] | None = None,
     candidate_terms: list[dict[str, Any]] | None = None,
     guidance: str | None = None,
 ) -> tuple[str, str]:
+    """"Propose from scratch" only -- there's no `existing_attributes` case anymore.
+    Revising an existing set is handled by the three decomposed prompts below
+    (build_keep_drop_prompt / build_gap_identification_prompt /
+    build_definition_prompt), used via attributes/revision.py::revise_attributes."""
     payload: dict[str, Any] = {
         "block_name": block_name,
         "sample_candidate_pairs": sample_pairs[:30],
@@ -270,21 +252,191 @@ def build_attribute_prompt(
         payload["field_stats"] = field_stats
     if candidate_terms:
         payload["candidate_terms"] = candidate_terms
-    if existing_attributes is not None:
-        payload["existing_attributes"] = existing_attributes
+    payload["instruction"] = f"Propose an initial set of 4-8 matching attributes for the '{block_name}' block."
+    return _ATTRIBUTE_SYSTEM, json.dumps(payload, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Decomposed attribute revision -- three narrower calls (keep/drop, gap
+# identification, definition) replacing the single "revise everything at once" call
+# above, for revision rounds specifically (round 0's "propose from scratch" call
+# still uses build_attribute_prompt unchanged -- there's nothing to keep/drop/gap-fill
+# yet). See attributes/revision.py's module docstring for why: this project's own
+# real agent-loop runs repeatedly showed a single big revision call getting SOME of
+# several simultaneous asks right and silently dropping others (adopting 6 of 25
+# offered categories; noticing a degenerate attribute's bad signal but never actually
+# dropping it) -- a narrower, single-purpose call per decision is a more direct fix
+# for that than either giving the model more autonomy (tools) or more context alone
+# (which this project already does extensively, e.g. holdout_error_examples).
+#
+# Stages 1 and 2 (not 3, which is closer to pure extraction than judgment) support an
+# alternate "need more info before I can decide" response shape -- see
+# _NEED_MORE_INFO_NOTE, appended to both those system prompts.
+# ---------------------------------------------------------------------------
+
+_NEED_MORE_INFO_NOTE = """
+
+If the information you're shown genuinely isn't enough to decide -- not as a default, \
+only when you specifically need a term's frequency or a few more real records to \
+resolve real ambiguity -- you may INSTEAD reply with exactly this shape, and you'll \
+be given the answer and asked again:
+{
+  "status": "need_more_info",
+  "requested": [
+    {"kind": "term_frequency", "term": "<a specific word>"},
+    {"kind": "sample_records", "term": "<a specific word>", "side": "fndds"}
+  ]
+}
+"term_frequency" returns how often a term occurs on each side of this block.
+"sample_records" returns a few real fndds descriptions or off product names (pick \
+"side": "fndds" or "off") containing that term. Request at most 3 items total, and \
+only ones a normal decision would plausibly turn on -- this costs an extra round trip, \
+so don't use it out of habit."""
+
+
+_KEEP_DROP_SYSTEM = (
+    """\
+You are reviewing an EXISTING set of matching attributes for probabilistic record \
+linkage (Fellegi-Sunter / splink) between USDA FNDDS and Open Food Facts (OFF) \
+records within a single product block, and deciding what to do with EACH ONE --
+nothing else. A later, separate step will handle defining any new attribute or \
+redefining an existing one's keywords; here you only decide "keep" / "drop" / \
+"redefine", and why.
+
+You will be shown "existing_attributes" (the current set), "correlation_flags" (a \
+Cramer's V report flagging attribute pairs that are too correlated -- one of a \
+correlated pair should usually be dropped or merged), and "evaluation" (aggregate \
+precision/recall/f1, and "attribute_discriminative_power": each attribute's \
+agreement rate on known-true pairs vs. random non-match pairs -- an attribute \
+agreeing at nearly the same rate on both, e.g. true=0.90/decoy=0.88, isn't \
+discriminating matches from non-matches at all and is a strong drop/redefine \
+candidate; a big gap, e.g. true=0.95/decoy=0.12, means it's doing real work and \
+should be kept as-is).
+
+Reply with ONLY a JSON object:
+{
+  "decisions": [
+    {"name": "<existing attribute name>", "action": "keep", "reason": "..."},
+    {"name": "<existing attribute name>", "action": "drop", "reason": "..."},
+    {"name": "<existing attribute name>", "action": "redefine", "reason": "why its current keywords/categories aren't working"}
+  ]
+}
+Include EVERY attribute in existing_attributes exactly once, in any order."""
+    + _NEED_MORE_INFO_NOTE
+)
+
+
+def build_keep_drop_prompt(
+    block_name: str,
+    existing_attributes: list[dict[str, Any]],
+    correlation_flags: list[dict[str, Any]] | None,
+    evaluation: dict[str, Any] | None,
+    guidance: str | None,
+) -> tuple[str, str]:
+    payload: dict[str, Any] = {"block_name": block_name, "existing_attributes": existing_attributes}
+    if guidance:
+        payload["domain_guidance"] = guidance
     if correlation_flags:
         payload["correlation_flags"] = correlation_flags
-    if evaluation is not None:
-        payload["previous_round_evaluation"] = evaluation
-    if existing_attributes is None:
-        payload["instruction"] = (
-            f"Propose an initial set of 4-8 matching attributes for the '{block_name}' block."
-        )
-    else:
-        payload["instruction"] = (
-            "Revise the attribute set: drop/merge correlated attributes, drop/redefine "
-            "non-discriminating attributes (see attribute_discriminative_power), add "
-            "attributes that would help distinguish the evaluation errors, or keep "
-            "unchanged if it looks optimal."
-        )
-    return _ATTRIBUTE_SYSTEM, json.dumps(payload, indent=2, default=str)
+    if evaluation:
+        payload["evaluation"] = evaluation
+    return _KEEP_DROP_SYSTEM, json.dumps(payload, indent=2, default=str)
+
+
+_GAP_SYSTEM = (
+    """\
+You are looking ONLY at concrete matching mistakes from the current round of \
+probabilistic record linkage (Fellegi-Sunter / splink) between USDA FNDDS and Open \
+Food Facts (OFF) records, deciding whether a genuinely NEW matching attribute (not a \
+redefinition of an existing one -- that's handled separately) would help fix them.
+
+You will be shown "false_positives" (pairs confidently predicted as a match that \
+aren't the true one) and "false_negatives" (true pairs the model scored too low), \
+each with both sides' description text, plus the block's "existing_attributes" for \
+context (don't propose something redundant with one already there). Look at what a \
+false positive's two descriptions actually DIFFER on that no existing attribute \
+captures, and what a false negative's two descriptions actually SHARE that no \
+existing attribute credits them for.
+
+Reply with ONLY a JSON object:
+{
+  "needed": true or false,
+  "concept": "one short phrase naming the new attribute's concept, e.g. 'contains molasses' -- omit or null if needed is false",
+  "rationale": "one or two sentences citing the specific example(s) that motivate this"
+}
+Do not invent keywords or a full definition here -- just the concept and why, in "concept"/"rationale"."""
+    + _NEED_MORE_INFO_NOTE
+)
+
+
+def build_gap_identification_prompt(
+    block_name: str,
+    error_examples: dict[str, list[dict[str, Any]]],
+    existing_attributes: list[dict[str, Any]],
+    guidance: str | None,
+) -> tuple[str, str]:
+    payload: dict[str, Any] = {
+        "block_name": block_name,
+        "existing_attributes": existing_attributes,
+        **error_examples,
+    }
+    if guidance:
+        payload["domain_guidance"] = guidance
+    return _GAP_SYSTEM, json.dumps(payload, indent=2, default=str)
+
+
+_DEFINITION_SYSTEM = """\
+You are defining matching attributes for probabilistic record linkage (Fellegi-Sunter \
+/ splink) between USDA FNDDS and Open Food Facts (OFF) records within a single \
+product block -- specifically, ONLY the attributes listed under "to_define" below \
+(each already decided as needing a new or revised definition by an earlier step); do \
+not propose anything else, and do not repeat attributes not listed there.
+
+For each, specify how to compute it on each side as a keyword-based rule (simple \
+case-insensitive substring matching against the block's text fields -- you are \
+proposing keyword lists and, for categorical attributes, category values, not \
+writing code). You will be shown "sample_candidate_pairs" (a few dozen real (FNDDS \
+description, OFF product name) pairs from this block), "field_stats" (may be absent: \
+the most common real category/brand values within this block's population -- ground \
+categorical attribute values in these), and "candidate_terms" (may be absent: tokens \
+mined from this block's own text that split its population meaningfully -- a floor, \
+not a ceiling; your own domain knowledge, including synonyms/translations pure \
+frequency counting can't find, may suggest better keywords).
+
+Reply with ONLY a JSON object:
+{
+  "attributes": [
+    {
+      "name": "<matches the to_define entry's name if redefining, or a new snake_case name>",
+      "kind": "boolean",
+      "description": "...",
+      "fndds_keywords": ["..."],
+      "off_keywords": ["..."]
+    }
+  ]
+}
+(a categorical attribute instead uses "categories": {"<category>": {"fndds_keywords": [...], "off_keywords": [...]}, ...} \
+in place of fndds_keywords/off_keywords, same as elsewhere in this project.)
+Output exactly one attribute per "to_define" entry, in the same order."""
+
+
+def build_definition_prompt(
+    block_name: str,
+    sample_pairs: list[dict[str, Any]],
+    field_stats: dict[str, Any] | None,
+    candidate_terms: list[dict[str, Any]] | None,
+    guidance: str | None,
+    to_define: list[dict[str, Any]],
+) -> tuple[str, str]:
+    payload: dict[str, Any] = {
+        "block_name": block_name,
+        "sample_candidate_pairs": sample_pairs[:30],
+        "to_define": to_define,
+    }
+    if guidance:
+        payload["domain_guidance"] = guidance
+    if field_stats:
+        payload["field_stats"] = field_stats
+    if candidate_terms:
+        payload["candidate_terms"] = candidate_terms
+    return _DEFINITION_SYSTEM, json.dumps(payload, indent=2, default=str)

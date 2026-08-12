@@ -18,7 +18,6 @@ import re
 from collections import Counter
 from typing import Any
 
-from agentic_matching.attributes.seed_rules import SEED_ATTRIBUTES as _LIBRARY_SEED_ATTRIBUTES
 from agentic_matching.blocking.rules import NEVER_USEFUL_KEYWORDS as _STOPWORDS
 from agentic_matching.llm.client import ChatClient
 
@@ -155,8 +154,6 @@ def _mined_boolean_attributes(candidate_terms: list[dict[str, Any]], k: int = _M
     return attrs
 
 
-_SEED_ATTRIBUTES = {"yogurt": _LIBRARY_SEED_ATTRIBUTES["yogurt"]}
-
 
 class MockChatClient(ChatClient):
     def complete_json(
@@ -175,6 +172,12 @@ class MockChatClient(ChatClient):
         payload = json.loads(user)
         if "fndds_sample_descriptions" in payload:
             response = self._blocking_response(payload)
+        elif "to_define" in payload:
+            response = self._definition_response(payload)
+        elif "false_positives" in payload:
+            response = self._gap_response(payload)
+        elif "existing_attributes" in payload and "sample_candidate_pairs" not in payload:
+            response = self._keep_drop_response(payload)
         elif "sample_candidate_pairs" in payload:
             response = self._attribute_response(payload)
         else:
@@ -264,37 +267,75 @@ class MockChatClient(ChatClient):
     # -- attributes -----------------------------------------------------------------
 
     def _attribute_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # "Propose from scratch" only -- build_attribute_prompt no longer has a
+        # revision case (see attributes/revision.py's decomposed flow, handled by
+        # _keep_drop_response/_gap_response/_definition_response below instead), and
+        # a block WITH a hand-authored seed (see attributes/seed_rules.py) never
+        # reaches this at all -- run_attribute_agent only calls build_attribute_prompt
+        # when there's no existing/seed attribute set yet, so this always mines from
+        # the block's own data, never returns a seed verbatim.
         block = payload["block_name"]
-        existing = payload.get("existing_attributes")
-        correlation_flags = payload.get("correlation_flags") or []
-
-        if existing is None:
-            if block in _SEED_ATTRIBUTES:
-                return {
-                    "attributes": _SEED_ATTRIBUTES[block],
-                    "rationale": f"[mock] seed attribute set for block '{block}'.",
-                }
-            # No seed (from-scratch block, e.g. beans): a small hand-curated exception
-            # for categorical attributes needing domain-synonym grouping, plus boolean
-            # attributes mined from this block's own data (see _mined_boolean_attributes).
-            categorical = _CATEGORICAL_EXCEPTIONS.get(block, [])
-            mined = _mined_boolean_attributes(payload.get("candidate_terms") or [])
-            return {
-                "attributes": categorical + mined,
-                "rationale": (
-                    f"[mock] {len(categorical)} hand-curated categorical attribute(s) + "
-                    f"{len(mined)} boolean attribute(s) mined from this block's own text."
-                ),
-            }
-
-        # Revision: drop the second attribute in each correlated pair (simple
-        # deterministic redundancy resolution), otherwise keep unchanged.
-        to_drop = {flag["attribute_b"] for flag in correlation_flags if "attribute_b" in flag}
-        attrs = [a for a in existing if a["name"] not in to_drop]
+        categorical = _CATEGORICAL_EXCEPTIONS.get(block, [])
+        mined = _mined_boolean_attributes(payload.get("candidate_terms") or [])
         return {
-            "attributes": attrs,
+            "attributes": categorical + mined,
             "rationale": (
-                f"[mock] dropped {sorted(to_drop)} for redundancy with a more informative "
-                "attribute." if to_drop else "[mock] attribute set looks stable; no changes."
+                f"[mock] {len(categorical)} hand-curated categorical attribute(s) + "
+                f"{len(mined)} boolean attribute(s) mined from this block's own text."
             ),
         }
+
+    def _keep_drop_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        existing = payload.get("existing_attributes") or []
+        correlation_flags = payload.get("correlation_flags") or []
+        # Same deterministic redundancy-resolution logic the old monolithic revision
+        # mock used: drop the second attribute in each correlated pair, keep
+        # everything else -- this mock has no real judgment to apply beyond that.
+        to_drop = {flag["attribute_b"] for flag in correlation_flags if "attribute_b" in flag}
+        return {
+            "decisions": [
+                {
+                    "name": a["name"],
+                    "action": "drop" if a["name"] in to_drop else "keep",
+                    "reason": (
+                        "[mock] correlated with a more informative attribute"
+                        if a["name"] in to_drop
+                        else "[mock] no issues flagged"
+                    ),
+                }
+                for a in existing
+            ]
+        }
+
+    def _gap_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # This mock has no real error-pattern-recognition heuristic (unlike the
+        # deterministic redundancy resolution above, "does a new attribute concept
+        # exist that would fix these specific errors" isn't a mechanical decision) --
+        # always says no, matching this mock's general philosophy elsewhere of not
+        # inventing signal it can't actually derive from the payload.
+        return {"needed": False}
+
+    def _definition_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Mines the same candidate-term pool _attribute_response uses for a
+        # from-scratch proposal, just capped/renamed to match each "to_define" entry
+        # 1:1 (a redefinition keeps its existing name; a new-from-gap entry has none,
+        # so one is synthesized).
+        to_define = payload.get("to_define") or []
+        mined = _mined_boolean_attributes(payload.get("candidate_terms") or [], k=len(to_define) or _MAX_MINED_ATTRIBUTES)
+        block = payload.get("block_name", "block")
+        attrs = []
+        for i, entry in enumerate(to_define):
+            name = entry.get("name")
+            if i < len(mined):
+                attr = dict(mined[i])
+                attr["name"] = name or attr["name"]
+            else:
+                attr = {
+                    "name": name or f"mock_new_attribute_{i}",
+                    "kind": "boolean",
+                    "description": f"[mock] placeholder for: {entry.get('reason', '')}",
+                    "fndds_keywords": [block],
+                    "off_keywords": [block],
+                }
+            attrs.append(attr)
+        return {"attributes": attrs}

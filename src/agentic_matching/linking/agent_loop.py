@@ -28,7 +28,7 @@ from agentic_matching.attributes.agent_loop import (
     load_latest_attributes,
 )
 from agentic_matching.attributes.metrics import check_correlations
-from agentic_matching.attributes.rules import filter_valid_attributes
+from agentic_matching.attributes.revision import revise_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
 from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings, round_temperature
 from agentic_matching.linking import splink_model
@@ -47,7 +47,6 @@ from agentic_matching.linking.evaluate import (
 )
 from agentic_matching.linking.nutrition_priors import apply_nutrition_priors, dampen_description_weight
 from agentic_matching.llm.client import ChatClient, get_llm_client
-from agentic_matching.llm.prompts import build_attribute_prompt
 
 log = logging.getLogger(__name__)
 
@@ -327,31 +326,22 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         # a fresh correlation check, same as the standalone attribute agent loop --
         # including the same block-grounded sample_pairs/field_stats/candidate_terms
         # (computed once, above), not just correlation/evaluation numbers in isolation.
+        # Decomposed into keep/drop -> gap-identification -> definition (see
+        # attributes/revision.py) rather than one big "revise everything" call --
+        # degeneracy_flags deliberately excluded from what's shown here: a degenerate
+        # attribute-column flag is now auto-remediated above (proactive drop, before
+        # this point) rather than something the LLM needs to review/act on itself.
         values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), off_df)
         correlation_flags = check_correlations(values_df)
-        evaluation: dict[str, Any] = {
-            **holdout_eval,
-            "degeneracy_flags": degeneracy_flags,
-            "attribute_discriminative_power": discriminative_power,
-            **error_examples,
-        }
+        evaluation: dict[str, Any] = {**holdout_eval, "attribute_discriminative_power": discriminative_power}
+        guidance = get_seed_attribute_notes(block_name)
         if auto_dropped:
-            evaluation["auto_dropped_attributes"] = (
-                "These attribute names were already tried and proactively removed (not "
-                "by you) because their comparison showed zero discriminating power in a "
-                "trained model: " + ", ".join(auto_dropped) + ". Don't propose them again "
-                "with the same definition."
+            note = (
+                "Do not propose these already-tried, proactively-removed attributes "
+                "again with the same definition -- their comparison showed zero "
+                f"discriminating power in a trained model: {auto_dropped}."
             )
-        sys_p, user_p = build_attribute_prompt(
-            block_name,
-            sample_pairs=sample_pairs,
-            existing_attributes=attrs,
-            correlation_flags=correlation_flags or None,
-            evaluation=evaluation,
-            field_stats=field_stats,
-            candidate_terms=candidate_terms,
-            guidance=get_seed_attribute_notes(block_name),
-        )
+            guidance = f"{guidance}\n\n{note}" if guidance else note
         # has_prior_state=True unconditionally -- unlike blocking/attributes' round 0,
         # this loop never lacks prior state: it always starts from an already-persisted
         # attribute set (see load_latest_attributes above), so every round here has
@@ -366,7 +356,22 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             temperature,
         )
         try:
-            response = client.complete_json(sys_p, user_p, temperature=temperature)
+            new_attrs, revision_rationale = revise_attributes(
+                client,
+                block_name,
+                attrs,
+                correlation_flags=correlation_flags or None,
+                evaluation=evaluation,
+                error_examples=error_examples,
+                sample_pairs=sample_pairs,
+                field_stats=field_stats,
+                candidate_terms=candidate_terms,
+                guidance=guidance,
+                fndds_texts=raw_fndds_df["description"].tolist(),
+                off_texts=raw_off_df["search_text"].tolist(),
+                temperature=temperature,
+            )
+            log.info("block '%s' round %d: %s", block_name, round_idx, revision_rationale)
         except Exception:
             # See blocking/agent_loop.py's identical handling for why: this round's own
             # training/evaluation already succeeded and is already appended to `rounds`
@@ -379,7 +384,6 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 block_name,
             )
             break
-        new_attrs = filter_valid_attributes(response["attributes"])
         if auto_dropped:
             # Defensive backstop against the LLM re-proposing an attribute already
             # proven non-discriminating this run, despite the evaluation payload

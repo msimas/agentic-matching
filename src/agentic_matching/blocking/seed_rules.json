@@ -3,7 +3,7 @@
     "fndds": {
       "keywords": ["bean"],
       "categories": ["Beans, baked", "Beans, black", "Beans, kidney", "Beans, pinto", "Beans, navy"],
-      "exclude_keywords": ["soybean", "peanut", "coffee", "salad", "dip", "rice", "soup", "chili", "lentil", "burrito", "taco"]
+      "exclude_keywords": ["fast food", "restaurant", "soybean", "peanut", "coffee", "salad", "dip", "rice", "soup", "chili", "lentil", "burrito", "taco"]
     },
     "off": {
       "keywords": ["bean"],
