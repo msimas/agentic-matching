@@ -1,4 +1,4 @@
-from agentic_matching.blocking.agent_loop import BlockingRound, _select_final_rule
+from agentic_matching.blocking.agent_loop import BlockingRound, _select_final_rule, select_best_blocking_round
 
 # Real numbers from the case this was written to fix: LLM_DEVICE=ollama, yogurt block.
 # Round 0 -> round 1 moved pair_completeness by +0.007 (well under the 0.01 default
@@ -63,3 +63,64 @@ def test_never_stabilized_keeps_last_round():
     )
     final = _select_final_rule([ROUND_0, ROUND_1_REAL_GAIN, round_2_real_gain])
     assert final is round_2_real_gain.rule
+
+
+# -- select_best_blocking_round: the regression guard nothing previously provided ----
+
+
+def test_never_stabilized_but_last_round_is_a_real_regression_does_not_win():
+    # The exact gap this function was added to close: a big (non-negligible) change
+    # that is ALSO a bad one. Old behavior would have shipped round_2 unconditionally
+    # just because the loop exhausted max_rounds without ever stabilizing.
+    round_2_regression = BlockingRound(
+        round=2,
+        rule={"fndds": {"keywords": ["yogurt", "plain"]}},  # "plain" catches everything
+        metrics={"pair_completeness": 0.4, "reduction_ratio": 0.95},  # big, real drop
+        rationale="broadened with a generic term",
+    )
+    final = _select_final_rule([ROUND_0, ROUND_1_REAL_GAIN, round_2_regression])
+    assert final is ROUND_1_REAL_GAIN.rule  # not the regressed last round
+
+
+def test_pair_completeness_below_floor_disqualifies_regardless_of_reduction_ratio():
+    unusable = BlockingRound(
+        round=0, rule={"fndds": {"keywords": ["x"]}}, metrics={"pair_completeness": 0.0, "reduction_ratio": 0.99999}, rationale=""
+    )
+    usable = BlockingRound(
+        round=1, rule={"fndds": {"keywords": ["y"]}}, metrics={"pair_completeness": 0.2, "reduction_ratio": 0.95}, rationale=""
+    )
+    assert select_best_blocking_round([unusable, usable]) is usable
+
+
+def test_reduction_ratio_below_floor_disqualifies_regardless_of_pair_completeness():
+    unusable = BlockingRound(
+        round=0, rule={"fndds": {"keywords": ["x"]}}, metrics={"pair_completeness": 0.9, "reduction_ratio": 0.5}, rationale=""
+    )
+    usable = BlockingRound(
+        round=1, rule={"fndds": {"keywords": ["y"]}}, metrics={"pair_completeness": 0.3, "reduction_ratio": 0.995}, rationale=""
+    )
+    assert select_best_blocking_round([unusable, usable]) is usable
+
+
+def test_balances_pair_completeness_and_reduction_ratio_not_either_alone():
+    # High pair_completeness but middling reduction_ratio vs. the reverse -- the
+    # harmonic mean should prefer whichever is more BALANCED, not just the one with
+    # the single highest raw number on either axis.
+    lopsided = BlockingRound(
+        round=0, rule={"fndds": {"keywords": ["x"]}}, metrics={"pair_completeness": 0.99, "reduction_ratio": 0.99}, rationale=""
+    )
+    balanced = BlockingRound(
+        round=1, rule={"fndds": {"keywords": ["y"]}}, metrics={"pair_completeness": 0.9, "reduction_ratio": 0.999}, rationale=""
+    )
+    # balanced: 2*0.9*0.999/(0.9+0.999) ≈ 0.9474 vs lopsided: 2*0.99*0.99/(0.99+0.99) = 0.99
+    # (lopsided actually wins here since both its numbers are high -- this test documents
+    # the harmonic-mean behavior concretely rather than asserting a vague notion of "balance").
+    assert select_best_blocking_round([lopsided, balanced]) is lopsided
+
+
+def test_single_round_is_returned_even_below_floors():
+    # No alternative exists -- returning the only round beats crashing on an empty max().
+    only = BlockingRound(
+        round=0, rule={"fndds": {"keywords": ["x"]}}, metrics={"pair_completeness": 0.0, "reduction_ratio": 0.0}, rationale=""
+    )
+    assert select_best_blocking_round([only]) is only

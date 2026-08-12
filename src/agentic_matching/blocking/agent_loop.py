@@ -171,31 +171,86 @@ def _stabilized(prev: dict[str, Any] | None, cur: dict[str, Any]) -> bool:
     )
 
 
+# Floors for select_best_blocking_round, below. Grounded in this project's own real
+# blocking metrics (see blocking_<block>_round0.json artifacts): reduction_ratio
+# clusters at 0.99996-0.9999999 across every real block observed (FNDDS ~5.4K x OFF
+# ~4.66M means even "0.99" still allows up to ~253M candidate pairs -- deliberately
+# generous headroom above real values, and below this project's own test suite's
+# accepted-as-fine synthetic value of 0.998 (see test_blocking_round_selection.py) --
+# only meant to catch a genuine order-of-magnitude blowup, not fine-grained
+# differences between otherwise-healthy rounds. pair_completeness ranged 0.0-0.85
+# across real/test blocks -- 0.05 catches "recovered essentially none of the
+# calibration pairs" without penalizing a modest-but-real score on a small/sparse
+# block.
+MIN_REDUCTION_RATIO = 0.99
+MIN_PAIR_COMPLETENESS = 0.05
+
+
+def select_best_blocking_round(rounds: list[BlockingRound]) -> BlockingRound:
+    """Pick the best-scoring round across the WHOLE history -- not just a comparison
+    between the last two rounds (that's `_stabilized`/`_select_final_rule`'s narrower,
+    different job: catching a small metric move that hides a real regression). Mirrors
+    linking.agent_loop.select_best_round's structure and rationale: a later round can
+    be a genuine regression on the actual metrics without ever being "negligibly
+    different" from the round right before it -- a big, non-negligible change can
+    still be a bad one -- and nothing previously protected against that; the loop
+    would just ship whatever `rounds[-1]` happened to be.
+
+    Scored as (usable pair_completeness, usable reduction_ratio, balanced score) in
+    that priority order:
+      - A rule that recovers next to none of the calibration pairs is unusable
+        regardless of how clean reduction_ratio looks (mirrors linking's "zero
+        confident real-world matches" disqualifier in its own select_best_round) --
+        floored at MIN_PAIR_COMPLETENESS.
+      - A rule so broad it barely reduces the candidate pool overwhelms downstream
+        splink training regardless of recall -- floored at MIN_REDUCTION_RATIO.
+      - Among rounds clearing both floors, maximize the harmonic mean of the two.
+        pair_completeness and reduction_ratio pull in different directions (recall vs.
+        selectivity), the same way linking's own precision/recall do, so neither
+        should be optimized alone -- f1-style balance, not a simple average, punishes
+        a round that's great on one and poor on the other rather than letting one
+        strong number hide a weak one.
+    """
+
+    def _score(r: BlockingRound) -> tuple[bool, bool, float]:
+        pc = r.metrics.get("pair_completeness") or 0.0
+        rr = r.metrics.get("reduction_ratio") or 0.0
+        balance = (2 * pc * rr / (pc + rr)) if (pc + rr) > 0 else 0.0
+        return (pc >= MIN_PAIR_COMPLETENESS, rr >= MIN_REDUCTION_RATIO, balance)
+
+    return max(rounds, key=_score)
+
+
 def _select_final_rule(rounds: list[BlockingRound]) -> dict[str, Any]:
     """Pick which round's rule to materialize as the block's final definition.
 
     If the loop stopped because the *last* round's metrics were negligibly different
     from the round before it (per `_stabilized`) -- rather than because it ran out of
-    rounds -- prefer the earlier, more conservative rule. A revision that only moves
-    the calibration-proxy metrics by a hair isn't worth whatever precision risk it
-    introduces, and the proxy metric (recall against the Branded<->OFF calibration
-    pairs) has no way to see that risk at all: verified case (real LLM, LLM_DEVICE=ollama,
-    yogurt block) -- a revision added "plain" as an FNDDS keyword, moving
-    pair_completeness by only +0.007 (well under the default 0.01 stabilization delta,
-    so the loop stopped) while pulling in 69 new false positives (muffins, waffles,
-    chicken wings, oatmeal, potato chips -- none of which are yogurt), because "plain"
-    is also a common qualifier for countless unrelated foods. Taking the round *before*
-    a change that small avoids adopting that kind of regression, at the cost of
-    forgoing genuinely-small-but-real improvements too -- an acceptable trade since
-    "small" here is explicitly the range the metric can't distinguish from noise.
+    rounds -- that last round isn't trusted on its own merits: a revision that only
+    moves the calibration-proxy metrics by a hair isn't worth whatever precision risk
+    it introduces, and the proxy metric (recall against the Branded<->OFF calibration
+    pairs) has no way to see that risk at all. Verified case (real LLM,
+    LLM_DEVICE=ollama, yogurt block): a revision added "plain" as an FNDDS keyword,
+    moving pair_completeness by only +0.007 (well under the default 0.01 stabilization
+    delta, so the loop stopped) while pulling in 69 new false positives (muffins,
+    waffles, chicken wings, oatmeal, potato chips -- none of which are yogurt), because
+    "plain" is also a common qualifier for countless unrelated foods. The last round is
+    excluded from consideration entirely in this case -- not blindly replaced with
+    "the round right before it": an earlier round further back could still be the
+    genuinely best one on the merits, and select_best_blocking_round (not a fixed
+    index) is what finds it.
 
-    If the loop instead ran through every round without ever stabilizing, there's no
-    "negligible change" signal to act on, so the last (most-recently-revised) round's
-    rule is used, as before.
+    Otherwise (the loop ran through every round without ever stabilizing, or stopped
+    for some other reason), every round is a fair candidate and
+    select_best_blocking_round picks among all of them -- this is what actually
+    protects against a later round being a real, non-negligible regression, which
+    nothing used to check at all (the old version of this function just took
+    `rounds[-1]` unconditionally in this case).
     """
+    candidates = rounds
     if len(rounds) >= 2 and _stabilized(rounds[-2].metrics, rounds[-1].metrics):
-        return rounds[-2].rule
-    return rounds[-1].rule
+        candidates = rounds[:-1]
+    return select_best_blocking_round(candidates).rule
 
 
 def materialize_block(con: duckdb.DuckDBPyConnection, block_name: str, rule: dict[str, Any]) -> dict[str, int]:
@@ -359,11 +414,14 @@ def run_blocking_agent(
 
     final_rule = _select_final_rule(rounds)
     if final_rule is not rounds[-1].rule:
+        final_round = next(r for r in rounds if r.rule is final_rule)
         log.info(
-            "Round %d's change was within the stabilization delta; keeping round %d's "
-            "rule instead (see _select_final_rule's docstring)",
+            "block '%s': round %d wasn't the best round produced -- using round %d's "
+            "rule instead (see _select_final_rule/select_best_blocking_round's "
+            "docstrings)",
+            block_name,
             rounds[-1].round,
-            rounds[-2].round,
+            final_round.round,
         )
     materialize_block(con, block_name, final_rule)
     con.close()
