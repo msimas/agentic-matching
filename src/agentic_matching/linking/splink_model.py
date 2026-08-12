@@ -127,7 +127,29 @@ def build_comparisons(attrs: list[dict[str, Any]]) -> list[Any]:
     never fixed it, in any of 3 blocks, across repeated outer-loop rounds). The
     `description` TEXT COLUMN itself is unaffected -- see build_linker's
     additional_columns_to_retain -- only its use as a splink comparison is gone, so
-    error-example/plausibility-report display text is unchanged."""
+    error-example/plausibility-report display text is unchanged.
+
+    Raises ValueError if `attrs` is empty. Before `description` was removed, this
+    could never happen -- it was an always-present comparison, so a Linker never had
+    zero of them even if every actual attribute got dropped. Verified real crash
+    (LLM_DEVICE=ollama, qwen3:4b-instruct-2507-q4_K_M -- a much smaller/weaker model
+    than this project's other verified backends, considerably more prone to producing
+    attributes that end up entirely unobservable on one side and get filtered by
+    prepare_frames' _drop_unobservable_attrs): an empty `comparisons` list makes
+    splink generate SQL with an empty bayes-factor product term (`... * , 1e-300 ...`,
+    a dangling comma where a multiplication operand should be) and fail deep inside
+    its own SQL execution with a cryptic `SplinkException` / DuckDB parser error,
+    instead of a clear, immediate, actionable failure at the actual point of the
+    problem. Callers (see run_linking_agent's per-round try/except) should catch this
+    specifically and stop that round/run gracefully rather than let it propagate as an
+    opaque crash from inside splink internals."""
+    if not attrs:
+        raise ValueError(
+            "build_comparisons: no matching attributes to build a comparison from -- "
+            "splink cannot train a model with zero comparisons. This block has no "
+            "usable attributes (all were dropped as unobservable, or none were ever "
+            "defined) -- fix the attribute set upstream rather than retry training as-is."
+        )
     return [cl.ExactMatch(attr["name"]) for attr in attrs]
 
 

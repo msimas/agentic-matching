@@ -313,47 +313,77 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
     dropped_definitions: dict[str, dict[str, Any]] = {}
 
     for round_idx in range(agent_loop_settings.max_rounds):
-        round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
-        # Proactively drop any attribute whose OWN comparison is degenerate
-        # (collapsed/label_switching/untrained -- see degenerate_attribute_columns's
-        # docstring for why all three mean "no usable signal" for an attribute
-        # comparison specifically) in this round's trained model, then retrain the
-        # SAME round without it -- rather than only handing it to the LLM as feedback
-        # and hoping a future revision notices. Real cases this fixes (beans,
-        # LLM_DEVICE=ollama/databricks): `beans_is_bean_dip` stayed collapsed through 6
-        # rounds of attribute revision, and `beans_preparation_method` showed
-        # label_switching in EVERY round of the block's entire history (true pairs
-        # agreed on it 0% of the time vs 0.2% for random decoy pairs -- see
-        # attribute_discriminative_power) -- in both cases the LLM kept revising other
-        # attributes instead of ever dropping the broken one, and the outer loop then
-        # misdiagnosed the survivor as a blocking problem. Looped (not a single pass)
-        # since dropping one attribute can occasionally unmask another; bounded
-        # naturally because `attrs` strictly shrinks each pass.
-        dropped_this_round: list[str] = []
-        while attrs:
-            degenerate = degenerate_attribute_columns(round_result.degeneracy_flags, {a["name"] for a in attrs})
-            if not degenerate:
-                break
-            kinds_by_name = {
-                f["column"]: f["kind"] for f in round_result.degeneracy_flags if f.get("column") in degenerate
-            }
-            log.warning(
-                "block '%s' round %d: proactively dropping attribute(s) %s -- "
-                "degeneracy flag(s) %s in this round's own trained model (see "
-                "degenerate_attribute_columns's docstring for what each flag kind "
-                "means for an attribute comparison); retraining round %d without them "
-                "instead of waiting on attribute revision to notice.",
-                block_name,
-                round_idx,
-                degenerate,
-                kinds_by_name,
-                round_idx,
-            )
-            drop_reasons.update(kinds_by_name)
-            dropped_definitions.update({a["name"]: a for a in attrs if a["name"] in degenerate})
-            dropped_this_round.extend(degenerate)
-            attrs = [a for a in attrs if a["name"] not in degenerate]
+        try:
             round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+            # Proactively drop any attribute whose OWN comparison is degenerate
+            # (collapsed/label_switching/untrained -- see degenerate_attribute_columns's
+            # docstring for why all three mean "no usable signal" for an attribute
+            # comparison specifically) in this round's trained model, then retrain the
+            # SAME round without it -- rather than only handing it to the LLM as feedback
+            # and hoping a future revision notices. Real cases this fixes (beans,
+            # LLM_DEVICE=ollama/databricks): `beans_is_bean_dip` stayed collapsed through 6
+            # rounds of attribute revision, and `beans_preparation_method` showed
+            # label_switching in EVERY round of the block's entire history (true pairs
+            # agreed on it 0% of the time vs 0.2% for random decoy pairs -- see
+            # attribute_discriminative_power) -- in both cases the LLM kept revising other
+            # attributes instead of ever dropping the broken one, and the outer loop then
+            # misdiagnosed the survivor as a blocking problem. Looped (not a single pass)
+            # since dropping one attribute can occasionally unmask another; bounded
+            # naturally because `attrs` strictly shrinks each pass.
+            dropped_this_round: list[str] = []
+            while attrs:
+                degenerate = degenerate_attribute_columns(round_result.degeneracy_flags, {a["name"] for a in attrs})
+                if not degenerate:
+                    break
+                kinds_by_name = {
+                    f["column"]: f["kind"] for f in round_result.degeneracy_flags if f.get("column") in degenerate
+                }
+                log.warning(
+                    "block '%s' round %d: proactively dropping attribute(s) %s -- "
+                    "degeneracy flag(s) %s in this round's own trained model (see "
+                    "degenerate_attribute_columns's docstring for what each flag kind "
+                    "means for an attribute comparison); retraining round %d without them "
+                    "instead of waiting on attribute revision to notice.",
+                    block_name,
+                    round_idx,
+                    degenerate,
+                    kinds_by_name,
+                    round_idx,
+                )
+                drop_reasons.update(kinds_by_name)
+                dropped_definitions.update({a["name"]: a for a in attrs if a["name"] in degenerate})
+                dropped_this_round.extend(degenerate)
+                attrs = [a for a in attrs if a["name"] not in degenerate]
+                round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+        except Exception:
+            # Training itself can fail, not just the LLM revision call below (see
+            # splink_model.build_comparisons' docstring for the verified real case:
+            # a weak local model, LLM_DEVICE=ollama qwen3:4b-instruct-2507-q4_K_M,
+            # proposed/kept attributes that all ended up unobservable and got dropped,
+            # leaving zero comparisons for splink to train -- previously masked by
+            # `description` always being a fallback comparison, now a clear ValueError
+            # instead of a cryptic splink-internals SQL crash, but still needs to be
+            # caught here rather than take down the whole run).
+            log.exception(
+                "Training failed for block '%s' round %d; stopping here.", block_name, round_idx
+            )
+            if not rounds:
+                # Round 0 itself never produced a usable model -- there is no prior
+                # round's attributes to fall back to (unlike the revision-call failure
+                # below, which always has at least round 0 already recorded), so
+                # there's nothing left to report. Matches what callers (e.g.
+                # outer_loop.diagnose_blocking_problem, select_best_round) already
+                # expect from a linking loop that produced no rounds -- both handle an
+                # empty list, not just a nonempty one with a bad last entry.
+                log.error(
+                    "block '%s': linking produced zero usable rounds -- the starting "
+                    "attribute set has no comparisons splink can train on. Nothing to "
+                    "report; fix the block's attributes before retrying.",
+                    block_name,
+                )
+                client.log_usage_summary(label=f"{block_name} linking, cumulative")
+                return []
+            break
         if dropped_this_round:
             round_result.dropped_attributes = dropped_this_round
             auto_dropped.extend(dropped_this_round)
@@ -550,6 +580,15 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             break
         attrs = new_attrs
         prev_f1 = cur_f1
+
+    if not rounds:
+        # Defensive backstop, not the primary guard -- the per-round try/except above
+        # already returns early on a round-0 training failure, the only realistic way
+        # to reach here with an empty list. Cheap insurance against select_best_round's
+        # max() crashing on an empty sequence if some future code path ever leaves
+        # `rounds` empty a different way.
+        client.log_usage_summary(label=f"{block_name} linking, cumulative")
+        return []
 
     # If the round the loop actually ended on isn't the best one produced (see
     # select_best_round's docstring for the verified regression case), the "always
