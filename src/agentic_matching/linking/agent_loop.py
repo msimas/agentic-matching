@@ -86,6 +86,34 @@ def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
     return abs(prev_f1 - cur_f1) < agent_loop_settings.stabilization_delta
 
 
+def _derived_evaluation_signals(
+    cur_f1: float | None, max_achievable_f1: float | None, best_round_f1: float | None
+) -> dict[str, Any]:
+    """Precomputes the two arithmetic judgments the keep/drop prompt used to leave to
+    the LLM -- "is f1 closing the gap toward max_achievable_f1" and "am I below
+    best_round_so_far" -- as plain values instead of raw numbers to compare itself.
+    Correct division/subtraction every time is not what an LLM call should be spending
+    its reasoning budget on; the actual judgment (what to DO about a low percentage or
+    a regression) still belongs to it.
+
+    "f1_pct_of_ceiling": cur_f1 as a percentage of max_achievable_f1 (0-100, rounded to
+    the nearest integer -- percentage points are legible without decimals here).
+    Omitted (key absent) when either input is missing, or when max_achievable_f1 is 0
+    (a holdout sample with zero resolvable true OFF items -- see _resolvable_ceiling --
+    makes any percentage meaningless, not just a div-by-zero to dodge).
+
+    "regressed_from_best_round": {"f1_delta": cur_f1 - best_round_f1}, always <= 0 when
+    present, since the caller only supplies best_round_f1 when the current round isn't
+    already the best one (see run_linking_agent's best_round_so_far). Omitted when
+    best_round_f1 isn't given."""
+    signals: dict[str, Any] = {}
+    if cur_f1 is not None and max_achievable_f1:
+        signals["f1_pct_of_ceiling"] = round(cur_f1 / max_achievable_f1 * 100)
+    if cur_f1 is not None and best_round_f1 is not None:
+        signals["regressed_from_best_round"] = {"f1_delta": round(cur_f1 - best_round_f1, 4)}
+    return signals
+
+
 def select_best_round(rounds: list[LinkingRound]) -> LinkingRound:
     """Pick which round's results are the actual final deliverable -- NOT just the
     last round, since a later revision can regress. Verified real case (yogurt,
@@ -388,13 +416,16 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
         # after the fact. Only worth mentioning when it's NOT the round currently being
         # evaluated -- no signal in "the best round so far is this one."
         best_so_far = select_best_round(rounds)
+        best_round_f1 = None
         if best_so_far.round != round_idx:
+            best_round_f1 = best_so_far.holdout_evaluation.get("f1")
             evaluation["best_round_so_far"] = {
                 "round": best_so_far.round,
-                "f1": best_so_far.holdout_evaluation.get("f1"),
+                "f1": best_round_f1,
                 "category_f1": best_so_far.holdout_evaluation.get("category_f1"),
                 "attribute_names": [a["name"] for a in best_so_far.attributes],
             }
+        evaluation.update(_derived_evaluation_signals(cur_f1, holdout_eval.get("max_achievable_f1"), best_round_f1))
         guidance = get_seed_attribute_notes(block_name)
         if auto_dropped:
             note = (

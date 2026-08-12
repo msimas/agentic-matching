@@ -9,6 +9,50 @@ from __future__ import annotations
 import json
 from typing import Any
 
+
+def _round_floats(obj: Any, ndigits: int = 4) -> Any:
+    """Recursively rounds every float in a payload to `ndigits` decimal places before
+    it's serialized into a prompt. Metrics computed from raw division (precision,
+    recall, f1, category_*, max_achievable_*, Cramer's V, match_probability, ...)
+    otherwise reach the LLM at full float precision (e.g.
+    0.037940379403794036) -- wasted tokens, and it makes round-to-round trends
+    (should be the whole point of showing several numbers side by side) harder to
+    eyeball than four decimal places ever would be. Applied once, uniformly, right
+    before every build_*_prompt's final json.dumps, rather than rounded ad hoc at each
+    metric's point of computation (easy to miss one; this can't miss any).
+
+    Leaves everything else untouched -- notably bool, since isinstance(True, int) is
+    True in Python and `isinstance(obj, float)` deliberately does NOT also catch it."""
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_round_floats(v, ndigits) for v in obj]
+    return obj
+
+
+def _summarize_attributes(attrs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strips an attribute list down to name/kind/description (+ just the category
+    NAMES for a categorical attribute, no keyword lists) -- for prompts that decide
+    whether to keep/drop/redefine an attribute or whether a new one is needed, not
+    prompts that write or judge its actual keyword content. A categorical attribute
+    like a real bean_type can carry a dozen categories' worth of fndds_keywords/
+    off_keywords; none of that bulk helps a keep/drop or gap-need judgment (that's
+    what attribute_discriminative_power/error_examples are for), it just adds tokens
+    and risks the model nitpicking specific keywords instead of the decision it's
+    actually being asked for. build_definition_prompt is unaffected -- it never
+    receives existing_attributes' full definitions in the first place (only
+    existing_attribute_names), so there's nothing to trim there."""
+    summarized = []
+    for a in attrs:
+        entry = {"name": a.get("name"), "kind": a.get("kind"), "description": a.get("description")}
+        if a.get("kind") == "categorical" and isinstance(a.get("categories"), dict):
+            entry["categories"] = list(a["categories"].keys())
+        summarized.append(entry)
+    return summarized
+
+
 # ---------------------------------------------------------------------------
 # Blocking
 # ---------------------------------------------------------------------------
@@ -138,7 +182,7 @@ def build_blocking_prompt(
         )
     else:
         payload["instruction"] = f"Propose an initial blocking rule for the '{block_name}' block."
-    return _BLOCKING_SYSTEM, json.dumps(payload, indent=2)
+    return _BLOCKING_SYSTEM, json.dumps(_round_floats(payload), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +297,7 @@ def build_attribute_prompt(
     if candidate_terms:
         payload["candidate_terms"] = candidate_terms
     payload["instruction"] = f"Propose an initial set of 4-8 matching attributes for the '{block_name}' block."
-    return _ATTRIBUTE_SYSTEM, json.dumps(payload, indent=2, default=str)
+    return _ATTRIBUTE_SYSTEM, json.dumps(_round_floats(payload), indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -319,8 +363,11 @@ correlated pair should usually be dropped or merged), and "evaluation":
     ceiling THIS holdout sample's own duplicate-description structure allows for \
     exact-id f1 -- many product descriptions repeat verbatim across different true \
     pairs, so even a flawless attribute set cannot exceed this ceiling (commonly well \
-    under 1.0). Judge whether f1 is closing the gap toward max_achievable_f1, not \
-    toward 1.0.
+    under 1.0).
+  - "f1_pct_of_ceiling" (may be absent): f1 already expressed as a percentage of \
+    max_achievable_f1 -- e.g. 12 means f1 has closed 12% of the gap to what this \
+    sample allows. Read THIS, not a mental division of f1 by max_achievable_f1, as the \
+    "how close to as-good-as-it-gets are we" number.
   - "attribute_discriminative_power": each attribute's agreement rate on known-true \
     pairs vs. random non-match pairs -- an attribute agreeing at nearly the same rate \
     on both, e.g. true=0.90/decoy=0.88, isn't discriminating matches from non-matches \
@@ -330,11 +377,15 @@ correlated pair should usually be dropped or merged), and "evaluation":
     they disagree about one particular attribute.
   - "best_round_so_far" (absent if the current round IS the best one): the round \
     number, f1, category_f1, and attribute names of the best-scoring round THIS RUN \
-    has produced. If the current round's f1 is below it, that means recent changes \
-    have been moving AWAY from what worked, not toward something better -- treat that \
-    as a signal to converge back toward best_round_so_far's attribute set (e.g. keep \
-    what it kept, undo a recent drop/redefine) rather than continuing to explore in a \
-    new direction on top of a regression.
+    has produced.
+  - "regressed_from_best_round" (present only alongside best_round_so_far): \
+    {"f1_delta": cur_f1 - best_round_so_far's f1}, always <= 0 when shown. Read THIS, \
+    not a mental subtraction of the two f1 values, as "how far behind the best I've \
+    already found am I." Its presence at all means recent changes have been moving \
+    AWAY from what worked, not toward something better -- treat that as a signal to \
+    converge back toward best_round_so_far's attribute set (e.g. keep what it kept, \
+    undo a recent drop/redefine) rather than continuing to explore in a new direction \
+    on top of a regression. The more negative f1_delta is, the stronger that signal.
 
 Reply with ONLY a JSON object:
 {
@@ -356,14 +407,14 @@ def build_keep_drop_prompt(
     evaluation: dict[str, Any] | None,
     guidance: str | None,
 ) -> tuple[str, str]:
-    payload: dict[str, Any] = {"block_name": block_name, "existing_attributes": existing_attributes}
+    payload: dict[str, Any] = {"block_name": block_name, "existing_attributes": _summarize_attributes(existing_attributes)}
     if guidance:
         payload["domain_guidance"] = guidance
     if correlation_flags:
         payload["correlation_flags"] = correlation_flags
     if evaluation:
         payload["evaluation"] = evaluation
-    return _KEEP_DROP_SYSTEM, json.dumps(payload, indent=2, default=str)
+    return _KEEP_DROP_SYSTEM, json.dumps(_round_floats(payload), indent=2, default=str)
 
 
 _GAP_SYSTEM = (
@@ -427,14 +478,14 @@ def build_gap_identification_prompt(
 ) -> tuple[str, str]:
     payload: dict[str, Any] = {
         "block_name": block_name,
-        "existing_attributes": existing_attributes,
+        "existing_attributes": _summarize_attributes(existing_attributes),
         **error_examples,
     }
     if guidance:
         payload["domain_guidance"] = guidance
     if concept_history:
         payload["concept_history"] = concept_history
-    return _GAP_SYSTEM, json.dumps(payload, indent=2, default=str)
+    return _GAP_SYSTEM, json.dumps(_round_floats(payload), indent=2, default=str)
 
 
 _DEFINITION_SYSTEM = """\
@@ -510,4 +561,4 @@ def build_definition_prompt(
         payload["field_stats"] = field_stats
     if candidate_terms:
         payload["candidate_terms"] = candidate_terms
-    return _DEFINITION_SYSTEM, json.dumps(payload, indent=2, default=str)
+    return _DEFINITION_SYSTEM, json.dumps(_round_floats(payload), indent=2, default=str)
