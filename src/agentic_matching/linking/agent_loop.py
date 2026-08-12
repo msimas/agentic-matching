@@ -46,7 +46,7 @@ from agentic_matching.linking.evaluate import (
     plausibility_report,
     score_against_holdout,
 )
-from agentic_matching.linking.nutrition_priors import apply_nutrition_priors, dampen_description_weight
+from agentic_matching.linking.nutrition_priors import apply_nutrition_priors
 from agentic_matching.llm.client import ChatClient, get_llm_client
 
 log = logging.getLogger(__name__)
@@ -188,14 +188,13 @@ def _train_and_evaluate_round(
     discriminative_power = attribute_discriminative_power(block_name, attrs)
     # A nutrition-significant attribute (meat/dairy/egg/sugar/molasses -- see
     # nutrition_priors.py) has its EM-trained m/u blended toward a domain prior
-    # rather than trusted as-is; `description`'s own comparison is separately damped
-    # toward "no information" (repeatedly unstable at this project's block scale --
-    # see nutrition_priors.py's module docstring). Every other comparison passes
-    # through unchanged. This produces a NEW settings dict each step -- rebuild the
-    # linker from the final one so every downstream prediction/degeneracy check
-    # reflects the actual, adjusted weights, not EM's untouched estimate.
+    # rather than trusted as-is. Every other comparison passes through unchanged --
+    # there's no longer a `description` comparison to separately damp (see
+    # splink_model.build_comparisons' docstring for why it was removed entirely
+    # rather than kept-but-suppressed). This produces a NEW settings dict each step --
+    # rebuild the linker from the final one so every downstream prediction/degeneracy
+    # check reflects the actual, adjusted weights, not EM's untouched estimate.
     trained_settings = apply_nutrition_priors(raw_trained_settings, attrs, discriminative_power)
-    trained_settings = dampen_description_weight(trained_settings)
     if trained_settings != raw_trained_settings:
         linker = splink_model.linker_from_settings(fndds_df, off_df, trained_settings)
 

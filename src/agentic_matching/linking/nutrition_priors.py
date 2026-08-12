@@ -3,33 +3,27 @@ pure post-processing on the already-exported trained_settings dict (same shape
 degeneracy_check.py/evaluate.py already operate on) -- EM trains completely
 unmodified first, so every comparison gets a real, data-informed estimate; only
 afterward are specific comparisons' levels nudged before the final prediction Linker
-is built from the adjusted settings (see splink_model.linker_from_settings). Two
-mechanisms, both interpolations rather than hard overrides (fix_m_probability/
-fix_u_probability, which would bypass EM training entirely for a comparison):
+is built from the adjusted settings (see splink_model.linker_from_settings).
 
-1. `apply_nutrition_priors` -- attributes that track a nutritionally-significant
-   ingredient or dietary classification (meat/dairy/egg = nutrient-dense,
-   sugar/molasses/honey/syrup = calorie-dense, vegetarian/vegan/plant-based = dietary
-   classification) have their learned m/u blended TOWARD a strong domain prior, since
-   this kind of difference reliably means two products are nutritionally different,
-   more reliably than a small/unlucky calibration sample may capture.
+`apply_nutrition_priors` -- attributes that track a nutritionally-significant
+ingredient or dietary classification (meat/dairy/egg = nutrient-dense,
+sugar/molasses/honey/syrup = calorie-dense, vegetarian/vegan/plant-based = dietary
+classification) have their learned m/u blended TOWARD a strong domain prior (an
+interpolation, not a hard override like fix_m_probability/fix_u_probability, which
+would bypass EM training entirely for a comparison), since this kind of difference
+reliably means two products are nutritionally different, more reliably than a
+small/unlucky calibration sample may capture.
 
-2. `dampen_description_weight` -- `description`'s own text-similarity comparison has
-   repeatedly shown instability at this project's block scale (label_switching and
-   collapsed flags recurring across nearly every real `beans` round -- see
-   degeneracy_check.py's verified cases), and short, highly repetitive product names
-   (many distinct real products all literally named "Baked beans") make text
-   similarity an inherently noisy match signal for a block like this -- prone to both
-   false agreement (different products, similar generic name) and false disagreement
-   (same product, differently formatted name). Rather than let one noisy, unstable
-   comparison dominate the final match_weight regardless of what the (real,
-   attribute-derived) nutrition signal says, its learned m/u are shrunk toward "no
-   information" (m == u) by a fixed damping factor.
-
-Detection for (1) is name/description substring matching, not a per-block/per-attribute
+Detection is name/description substring matching, not a per-block/per-attribute
 registry -- see classify_nutrition_significance's docstring for why, and for the
 tradeoff against also scanning keyword lists.
-"""
+
+This module used to also have `dampen_description_weight`, shrinking `description`'s
+own text-similarity comparison toward "no information" because it repeatedly showed
+instability (label_switching and collapsed flags) at this project's block scale.
+Removed along with `description` itself as a splink comparison (see
+splink_model.build_comparisons' docstring for the full verified case) -- damping a
+comparison that no longer exists would have been a silent no-op, not a fix."""
 
 from __future__ import annotations
 
@@ -111,14 +105,6 @@ PRIOR_BY_GROUP: dict[str, tuple[float, float]] = {name: prior for name, _, prior
 # prior-target comment above for the real-data verification of why.)
 PRIOR_CONFIDENCE_PAIRS = 200
 MAX_PRIOR_WEIGHT = 0.45
-
-# `description`'s comparison levels are shrunk toward "no information" (m == u) by
-# this factor before prediction -- 0 = fully neutral (description contributes nothing
-# to match_weight), 1 = untouched (EM's own estimate used as-is). 0.35 keeps a modest
-# residual signal (description agreement still nudges the score) while sharply
-# reducing how much a single noisy, degeneracy-prone comparison can dominate the
-# final match_weight relative to the (real, attribute-derived) nutrition signal above.
-DESCRIPTION_DAMPING = 0.35
 
 
 def classify_nutrition_significance(attr: dict[str, Any]) -> str | None:
@@ -225,54 +211,4 @@ def apply_nutrition_priors(
         )
         exact_level["m_probability"], exact_level["u_probability"] = m, u
         else_level["m_probability"], else_level["u_probability"] = 1 - m, 1 - u
-    return settings
-
-
-def dampen_description_weight(
-    trained_settings: dict[str, Any], damping: float = DESCRIPTION_DAMPING
-) -> dict[str, Any]:
-    """Returns a NEW settings dict (deep-copied; `trained_settings` itself is never
-    mutated) with `description`'s comparison levels shrunk toward "no information"
-    (m == u) by `damping` -- see this module's docstring for why.
-
-    Each non-null level's m_probability is pulled toward its OWN u_probability
-    (`u` is left untouched) -- `description` has more than 2 levels (JaroWinklerAt
-    Thresholds, unlike an attribute's 2-level ExactMatch), so there's no single
-    complementary "else" level to recompute the way apply_nutrition_priors does;
-    shrinking only m keeps the direction of any real signal intact (still m >= u,
-    i.e. non-negative evidence) while reducing its magnitude, rather than blending
-    both m and u toward some arbitrary midpoint that could flip the sign.
-    `damping=1` is a no-op (m unchanged); `damping=0` sets m == u on every level, i.e.
-    log2(m/u) == 0 -- description contributes nothing to match_weight at all.
-    """
-    settings = copy.deepcopy(trained_settings)
-    for comparison in settings.get("comparisons", []):
-        if comparison.get("output_column_name") != "description":
-            continue
-        for level in comparison.get("comparison_levels", []):
-            if level.get("is_null_level"):
-                continue
-            m_data, u_data = level.get("m_probability"), level.get("u_probability")
-            if m_data is None or u_data is None:
-                # EM doesn't always fully train every comparison every round -- see
-                # apply_nutrition_priors' identical guard (and the real crash it
-                # fixes) for why this can legitimately happen. No prior to fall back
-                # on for description (unlike a nutrition-significant attribute), so
-                # just leave this level untouched rather than guessing.
-                log.warning(
-                    "description level %r untrained this round (m=%s u=%s); leaving undamped.",
-                    level.get("label_for_charts", level.get("sql_condition")),
-                    m_data,
-                    u_data,
-                )
-                continue
-            level["m_probability"] = damping * m_data + (1 - damping) * u_data
-            log.info(
-                "description level %r: damping m=%.3f toward u=%.3f (damping=%.2f) -> m=%.3f",
-                level.get("label_for_charts", level.get("sql_condition")),
-                m_data,
-                u_data,
-                damping,
-                level["m_probability"],
-            )
     return settings

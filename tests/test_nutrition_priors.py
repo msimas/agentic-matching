@@ -4,14 +4,12 @@ import pytest
 
 from agentic_matching.linking.nutrition_priors import (
     CALORIE_DENSE_PRIOR,
-    DESCRIPTION_DAMPING,
     DIETARY_CLASSIFICATION_PRIOR,
     MAX_PRIOR_WEIGHT,
     NUTRIENT_DENSE_PRIOR,
     PRIOR_CONFIDENCE_PAIRS,
     apply_nutrition_priors,
     classify_nutrition_significance,
-    dampen_description_weight,
 )
 
 # -- classify_nutrition_significance ---------------------------------------------
@@ -187,62 +185,8 @@ def test_description_comparison_never_touched_by_apply_nutrition_priors():
     assert result == settings
 
 
-# -- dampen_description_weight ----------------------------------------------------
-
-
-def _description_settings(levels: list[tuple[float, float]]) -> dict:
-    comparison_levels = [{"is_null_level": True}]
-    for i, (m, u) in enumerate(levels):
-        comparison_levels.append({"label_for_charts": f"level_{i}", "m_probability": m, "u_probability": u})
-    return {"comparisons": [{"output_column_name": "description", "comparison_levels": comparison_levels}]}
-
-
-def test_damping_zero_sets_m_equal_to_u():
-    settings = _description_settings([(0.9, 0.1), (0.6, 0.3)])
-    result = dampen_description_weight(settings, damping=0.0)
-    for level in result["comparisons"][0]["comparison_levels"][1:]:
-        assert level["m_probability"] == pytest.approx(level["u_probability"])
-
-
-def test_damping_one_is_a_no_op():
-    settings = _description_settings([(0.9, 0.1), (0.6, 0.3)])
-    result = dampen_description_weight(settings, damping=1.0)
-    assert result == settings
-
-
-def test_damping_shrinks_m_toward_u_without_touching_u():
-    settings = _description_settings([(0.9, 0.1)])
-    result = dampen_description_weight(settings, damping=0.35)
-    level = result["comparisons"][0]["comparison_levels"][1]
-    assert level["m_probability"] == pytest.approx(0.35 * 0.9 + 0.65 * 0.1)
-    assert level["u_probability"] == pytest.approx(0.1)  # u untouched
-
-
-def test_damping_preserves_sign_of_evidence():
-    # m stays >= u after damping -- shrinking toward u, not past it.
-    settings = _description_settings([(0.9, 0.1)])
-    result = dampen_description_weight(settings, damping=DESCRIPTION_DAMPING)
-    level = result["comparisons"][0]["comparison_levels"][1]
-    assert level["m_probability"] >= level["u_probability"]
-
-
-def test_null_level_untouched():
-    settings = _description_settings([(0.9, 0.1)])
-    result = dampen_description_weight(settings, damping=0.0)
-    assert result["comparisons"][0]["comparison_levels"][0] == {"is_null_level": True}
-
-
-def test_non_description_comparison_untouched():
-    settings = _settings_with_comparison("beans_contains_meat", 0.9, 0.1)
-    result = dampen_description_weight(settings, damping=0.0)
-    assert result == settings
-
-
-def test_original_settings_not_mutated_by_damping():
-    settings = _description_settings([(0.9, 0.1)])
-    original = copy.deepcopy(settings)
-    dampen_description_weight(settings, damping=0.0)
-    assert settings == original
+# dampen_description_weight and its tests were removed along with the `description`
+# splink comparison itself -- see nutrition_priors.py's module docstring for why.
 
 
 # -- untrained comparison (m_probability/u_probability missing) -- real verified crash --
@@ -282,20 +226,3 @@ def test_apply_nutrition_priors_untrained_with_none_values_does_not_crash():
     assert exact["m_probability"] == pytest.approx(NUTRIENT_DENSE_PRIOR[0])
 
 
-def test_dampen_description_weight_untrained_level_left_undamped():
-    settings = {
-        "comparisons": [
-            {
-                "output_column_name": "description",
-                "comparison_levels": [
-                    {"is_null_level": True},
-                    {"label_for_charts": "untrained level"},  # no m/u keys
-                    {"label_for_charts": "trained level", "m_probability": 0.9, "u_probability": 0.1},
-                ],
-            }
-        ]
-    }
-    result = dampen_description_weight(settings, damping=0.0)
-    levels = result["comparisons"][0]["comparison_levels"]
-    assert "m_probability" not in levels[1]  # untouched, not crashed
-    assert levels[2]["m_probability"] == pytest.approx(0.1)  # trained level still damped normally

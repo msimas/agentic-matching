@@ -85,11 +85,10 @@ def check_degeneracy(settings: dict[str, Any]) -> list[dict[str, Any]]:
     return flags
 
 
-# Degeneracy-flag kinds that, when they land on a specific ATTRIBUTE's comparison (as
-# opposed to `description`'s), all mean the same practical thing: that attribute isn't
-# contributing any usable matching signal in this block. See
-# degenerate_attribute_columns's docstring for why each one qualifies, and why the
-# same reasoning does NOT extend to `description`.
+# Degeneracy-flag kinds that, when they land on a specific ATTRIBUTE's comparison, all
+# mean the same practical thing: that attribute isn't contributing any usable matching
+# signal in this block. See degenerate_attribute_columns's docstring for why each one
+# qualifies.
 ATTRIBUTE_DEGENERACY_KINDS = frozenset({"collapsed", "label_switching", "untrained"})
 
 
@@ -98,19 +97,26 @@ def degenerate_attribute_columns(
     attr_names: set[str],
     kinds: frozenset[str] = ATTRIBUTE_DEGENERACY_KINDS,
 ) -> list[str]:
-    """Which degeneracy flags are on a specific *attribute*'s comparison, as opposed to
-    `description`'s -- see splink_model.build_comparisons: every comparison column is
-    named either an attribute's own `name` or the literal "description", so this is an
-    exact-membership check, not a heuristic.
+    """Which degeneracy flags are on a specific *attribute*'s comparison -- an
+    exact-membership check against `attr_names`, not a heuristic, since every
+    comparison column is named after an attribute's own `name` (see
+    splink_model.build_comparisons; every comparison in this codebase is now
+    attribute-derived -- a `description` text-similarity comparison used to also
+    exist and was excluded by this same membership check, but was removed entirely
+    after verifying it showed the exact same degeneracy in effectively every trained
+    round across every block tested and that re-blocking never fixed it -- see
+    build_comparisons' docstring for the full case; `kinds`/this function's
+    attribute-vs-not distinction is unchanged and still generalizes to any future
+    non-attribute comparison).
 
-    This distinction matters because an attribute-column flag and a `description`-
-    column flag call for opposite fixes: a degenerate `description` comparison means
-    the candidate pairs from *blocking* had too little real variation for EM to
-    estimate string-similarity parameters from -- no attribute change can fix that,
-    only a broader/narrower blocking rule can (see outer_loop.diagnose_blocking_
-    problem). A degenerate *attribute* comparison means that one derived attribute
-    isn't pulling its weight in this block, and the fix is to drop or redefine it, not
-    to touch blocking at all.
+    This distinction matters because a degenerate attribute comparison and a
+    degenerate non-attribute comparison would call for opposite fixes: the former
+    means that one derived attribute isn't pulling its weight in this block, and the
+    fix is to drop or redefine it, not to touch blocking; a hypothetical future
+    non-attribute comparison behaving the same way would instead point at *blocking*
+    (see outer_loop.diagnose_blocking_problem) -- too little real variation in the
+    candidate pairs for EM to estimate real parameters from, not fixable by any
+    attribute change.
 
     All three flag `kinds` mean this for an ATTRIBUTE comparison specifically, because
     every attribute comparison in this codebase is built via cl.ExactMatch (see
@@ -123,10 +129,7 @@ def degenerate_attribute_columns(
         m(not-exact) -- true matches are LESS likely to agree on this attribute than
         to disagree. Actively anti-correlated with matching, not merely uninformative
         -- arguably worse than "collapsed", and structurally guaranteed to mean that
-        for a 2-level comparison (unlike description's 3-level JaroWinklerAtThresholds,
-        where an inversion between adjacent similarity thresholds is a different,
-        blocking-shaped question -- exactly why this never applies outside
-        `attr_names`). Verified real case (beans, `beans_preparation_method`,
+        for a 2-level comparison. Verified real case (beans, `beans_preparation_method`,
         LLM_DEVICE=ollama): agreement_rate_true_pairs=0.0 vs
         agreement_rate_decoy_pairs=0.002 across 4 real rounds (see
         attribute_discriminative_power) -- true pairs never agreed on this attribute,

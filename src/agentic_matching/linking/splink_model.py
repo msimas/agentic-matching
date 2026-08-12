@@ -21,8 +21,6 @@ from agentic_matching.config import BLOCKS_DIR
 
 log = logging.getLogger(__name__)
 
-TEXT_COMPARISON_THRESHOLDS = [0.9, 0.7]
-
 
 def load_block_frames(block_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     fndds_path = BLOCKS_DIR / f"{block_name}_fndds.parquet"
@@ -112,9 +110,25 @@ def prepare_frames(
 
 
 def build_comparisons(attrs: list[dict[str, Any]]) -> list[Any]:
-    comparisons = [cl.ExactMatch(attr["name"]) for attr in attrs]
-    comparisons.append(cl.JaroWinklerAtThresholds("description", TEXT_COMPARISON_THRESHOLDS))
-    return comparisons
+    """One ExactMatch comparison per matching attribute -- deliberately NOT also a
+    fuzzy `description` text-similarity comparison (a JaroWinklerAtThresholds on raw
+    FNDDS description vs. OFF product name used to be appended here). Removed after
+    verifying it showed the SAME degeneracy (both `collapsed` and `label_switching`)
+    in effectively every trained round across every block tested (beans, yogurt,
+    breaded_vegetables) -- structural, not a fluke: FNDDS uses standardized USDA
+    nomenclature ("BLACK BEANS") while OFF uses branded consumer product names
+    ("Trader Joe's Organic Black Beans, 15oz"), so raw full-string fuzzy similarity has
+    little real correlation with whether two records actually match. Its practical
+    contribution to match_weight was already being suppressed toward zero by
+    nutrition_priors.dampen_description_weight (now removed along with it) -- this
+    just stops fitting a comparison whose own trained parameters never showed real
+    signal, and stops outer_loop.diagnose_blocking_problem from repeatedly
+    misdiagnosing that non-signal as a re-blockable problem (verified: re-blocking
+    never fixed it, in any of 3 blocks, across repeated outer-loop rounds). The
+    `description` TEXT COLUMN itself is unaffected -- see build_linker's
+    additional_columns_to_retain -- only its use as a splink comparison is gone, so
+    error-example/plausibility-report display text is unchanged."""
+    return [cl.ExactMatch(attr["name"]) for attr in attrs]
 
 
 def build_blocking_rules(attrs: list[dict[str, Any]]) -> list[Any]:
@@ -143,6 +157,14 @@ def build_linker(
         link_type="link_only",
         comparisons=build_comparisons(attrs),
         blocking_rules_to_generate_predictions=build_blocking_rules(attrs),
+        # `description` is no longer a comparison (see build_comparisons' docstring),
+        # but splink only retains a column in predictions if it's either used in a
+        # comparison or explicitly listed here -- without this, description_l/
+        # description_r would silently disappear from predictions, breaking every
+        # display/diagnostic consumer that reads them (plausibility_report's top/bottom
+        # examples, holdout_error_examples, evaluate.py's same_text_as_true_partner
+        # tagging, ...). Retained purely for display now, not compared.
+        additional_columns_to_retain=["description"],
         # Intermediate per-comparison-level calculation columns are only useful for
         # manually eyeballing a handful of pairs (e.g. linking/charts.py's waterfall
         # chart, which requires this to be True); retaining them for every predicted
@@ -171,9 +193,16 @@ def linker_from_settings(fndds_df: pd.DataFrame, off_df: pd.DataFrame, settings:
 
 
 def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
-    """Two-pass EM: each pass blocks on a different column so every comparison gets an
-    m-probability estimate from at least one pass (a comparison's m can't be estimated
-    in a pass that blocks on that same column).
+    """Two-pass EM: each pass blocks on a different ATTRIBUTE column so every
+    comparison gets an m-probability estimate from at least one pass (a comparison's m
+    can't be estimated in a pass that blocks on that same column). Used to be
+    attrs[0]/`description` (description was always the second pass's blocking column,
+    via a short-text-prefix proxy rule) -- now attrs[0]/attrs[-1], since `description`
+    is no longer a comparison at all (see build_comparisons' docstring) and so has
+    nothing left to block on for EM's sake. With a single attribute there's only one
+    pass, and that attribute's own m isn't EM-estimated by it (pre-existing edge case,
+    unchanged by this -- a block would need at least 2 attributes for full EM coverage
+    either way).
 
     Every EM/u-estimation blocking rule that blocks on an attribute is combined (AND)
     with the search-text prefix condition, so a low-cardinality/skewed attribute can't
@@ -189,13 +218,10 @@ def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
     linker.training.estimate_probability_two_random_records_match([br_estimate], recall=0.7)
     linker.training.estimate_u_using_random_sampling(max_pairs=2e6)
 
-    comparison_cols = [a["name"] for a in attrs] + ["description"]
+    comparison_cols = [a["name"] for a in attrs]
     em_blocking_cols = [comparison_cols[0], comparison_cols[-1]] if len(comparison_cols) > 1 else comparison_cols
     for col in dict.fromkeys(em_blocking_cols):  # de-dup, preserve order
-        if col == "description":
-            rule = "substr(l.search_text, 1, 6) = substr(r.search_text, 1, 6)"
-        else:
-            rule = block_on(col, "substr(l.search_text, 1, 4)")
+        rule = block_on(col, "substr(l.search_text, 1, 4)")
         linker.training.estimate_parameters_using_expectation_maximisation(rule)
 
 

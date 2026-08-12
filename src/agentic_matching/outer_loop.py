@@ -88,14 +88,20 @@ def diagnose_blocking_problem(rounds: list[LinkingRound]) -> str | None:
             f"after {len(rounds)} round(s) of attribute revision, well below a usable "
             f"threshold ({MIN_CANDIDATE_PAIRS})"
         )
-    # Only a collapsed `description` (or other non-attribute) comparison implicates
-    # blocking -- a collapsed *attribute* comparison means that one derived attribute
-    # carries no discriminating signal in this block, which is an attribute-shaped
-    # problem, not a blocking one (see degenerate_attribute_columns's docstring). The
-    # inner linking loop now proactively drops those itself before a round is even
-    # recorded (see run_linking_agent's retrain-on-degeneracy loop), so this should
-    # rarely fire on an attribute name in practice -- excluded here regardless, as a
-    # correctness guarantee rather than something that merely happens to hold today.
+    # Only a collapsed NON-attribute comparison implicates blocking -- a collapsed
+    # *attribute* comparison means that one derived attribute carries no discriminating
+    # signal in this block, which is an attribute-shaped problem, not a blocking one
+    # (see degenerate_attribute_columns's docstring). The inner linking loop now
+    # proactively drops those itself before a round is even recorded (see
+    # run_linking_agent's retrain-on-degeneracy loop), so this should rarely fire on an
+    # attribute name in practice -- excluded here regardless, as a correctness
+    # guarantee rather than something that merely happens to hold today. Used to
+    # reliably mean `description` specifically (its own fuzzy text comparison showed
+    # this in effectively every trained round across every block tested, and
+    # re-blocking never actually fixed it) -- `description` is no longer a comparison
+    # at all (see splink_model.build_comparisons' docstring), so this condition is now
+    # expected to rarely if ever fire; kept as a generic guarantee, not deleted,
+    # in case a future comparison develops the same failure mode.
     # kinds={"collapsed"} only, matching this function's own narrower scope (see its
     # docstring) -- label_switching/untrained attribute flags are the inner loop's
     # concern (it checks all three), not a reason to trigger re-blocking here.
