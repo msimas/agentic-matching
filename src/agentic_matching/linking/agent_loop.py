@@ -83,6 +83,35 @@ class LinkingRound:
     dropped_attributes: list[str] = field(default_factory=list)
 
 
+def _choose_attributes_to_drop(
+    degenerate: list[str],
+    attrs: list[dict[str, Any]],
+    discriminative_power: list[dict[str, Any]],
+) -> tuple[list[str], str | None]:
+    """Which of `degenerate`'s attribute names to actually drop, and (if triggered) the
+    name of the one deliberately spared. Returns (to_drop, kept_name) -- kept_name is
+    None on the normal path (some but not all of `attrs` flagged; drop all of them).
+
+    Guards against emptying `attrs` to zero in one pass: if EVERY attribute still
+    standing got flagged degenerate together, dropping all of them would hand the next
+    retrain zero comparisons, which splink_model.build_comparisons correctly refuses
+    (ValueError) -- see the call site in run_linking_agent for the full verified case
+    (breaded_vegetables, two categorical attributes both flagged label_switching at
+    once from EM-blocking-pool instability on a tiny block, neither one actually bad on
+    its own). When that happens, keep whichever flagged attribute has the best true/
+    decoy discriminative-power gap (agreement_rate_true_pairs - agreement_rate_decoy_pairs)
+    instead -- it also gets to retrain via splink_model.train's safer single-attribute
+    path (a plain search-text-prefix EM block, not self-blocked)."""
+    if not degenerate or len(degenerate) < len(attrs):
+        return degenerate, None
+    power_by_name = {
+        d["attribute"]: d.get("agreement_rate_true_pairs", 0.0) - d.get("agreement_rate_decoy_pairs", 0.0)
+        for d in discriminative_power
+    }
+    keep = max(degenerate, key=lambda n: power_by_name.get(n, -1.0))
+    return [n for n in degenerate if n != keep], keep
+
+
 def _stabilized(prev_f1: float | None, cur_f1: float | None) -> bool:
     if prev_f1 is None or cur_f1 is None:
         return False
@@ -351,6 +380,20 @@ def run_linking_agent(
                 kinds_by_name = {
                     f["column"]: f["kind"] for f in round_result.degeneracy_flags if f.get("column") in degenerate
                 }
+                degenerate, kept_name = _choose_attributes_to_drop(
+                    degenerate, attrs, round_result.attribute_discriminative_power
+                )
+                if kept_name:
+                    log.warning(
+                        "block '%s' round %d: every remaining attribute was flagged degenerate at "
+                        "once -- keeping %r (best true/decoy discriminative gap among them) instead "
+                        "of dropping down to zero comparisons (see _choose_attributes_to_drop's "
+                        "docstring for why).",
+                        block_name, round_idx, kept_name,
+                    )
+                    kinds_by_name = {k: v for k, v in kinds_by_name.items() if k != kept_name}
+                    if not degenerate:
+                        break
                 log.warning(
                     "block '%s' round %d: proactively dropping attribute(s) %s -- "
                     "degeneracy flag(s) %s in this round's own trained model (see "

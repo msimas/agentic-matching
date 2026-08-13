@@ -64,9 +64,31 @@ def _side_predicate_sql(
     excludes = [k.lower().replace("'", "''") for k in side_rule.get("exclude_keywords", []) if k]
     categories = [c.replace("'", "''") for c in side_rule.get("categories", []) if c]
 
+    # `keywords`/`excludes` are already lowercased above; `text_col` itself is NOT
+    # assumed to be -- wrap it in lower() here, unconditionally, rather than trusting
+    # every caller to remember to pass an already-lowercased column (the category
+    # clause below already does this defensively; the keyword clause used not to).
+    # Verified real bug this fixes: blocking/agent_loop.py's materialize_block (and
+    # metrics.py's block_sizes, via fndds_predicate_sql's default text_col) both pass
+    # the RAW `description` column -- DuckDB's LIKE is case-sensitive by default, so a
+    # keyword like "fried mushrooms" against the raw "Fried mushrooms" matched ZERO
+    # rows despite being a correct, intended match. This silently, catastrophically
+    # broke the `breaded_vegetables` block specifically (its real FNDDS descriptions
+    # are short and keyword-first, e.g. "Fried mushrooms", "Sweet potato fries" --
+    # capitalized at exactly the position every keyword needed to match) while going
+    # unnoticed on blocks like `beans`, where a generic keyword ("bean") often
+    # coincidentally appears already-lowercase mid-description ("Black beans") even in
+    # raw case, masking the bug. Confirmed directly: `description LIKE
+    # '%fried mushrooms%'` -> 0 rows; `lower(description) LIKE '%fried mushrooms%'` ->
+    # 1 row (the real match). Doubly dangerous because the LOOP's own optimization
+    # signal (metrics.pair_completeness) was NEVER affected -- it always passed an
+    # explicitly pre-lowercased column -- so the agent loop had no way to notice its
+    # materialized output didn't match what it thought it was optimizing.
+    text_col_lower = f"lower({text_col})"
+
     clauses = []
     if keywords:
-        include = " OR ".join(f"{text_col} LIKE '%{kw}%'" for kw in keywords)
+        include = " OR ".join(f"{text_col_lower} LIKE '%{kw}%'" for kw in keywords)
         clauses.append(f"({include})")
     if categories and category_col:
         if category_kind == "array_contains":
@@ -87,7 +109,7 @@ def _side_predicate_sql(
     # more complete catalog.
     sql = "(" + " AND ".join(clauses) + ")"
     if excludes:
-        exclude = " OR ".join(f"{text_col} LIKE '%{kw}%'" for kw in excludes)
+        exclude = " OR ".join(f"{text_col_lower} LIKE '%{kw}%'" for kw in excludes)
         sql = f"({sql} AND NOT ({exclude}))"
     return sql
 

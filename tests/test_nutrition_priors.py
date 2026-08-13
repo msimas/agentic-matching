@@ -104,10 +104,15 @@ def test_original_settings_dict_not_mutated():
 
 
 def test_nutrition_significant_attribute_blended_toward_prior():
-    m_data, u_data = 0.55, 0.48
+    # m_data == u_data -> zero inherent separation (strength_weight=0), combined with
+    # n_true_pairs=0 (sample_weight=0) -> weight=0 -> fully the prior. (A nonzero-gap
+    # m_data/u_data pair at n_true_pairs=0 is covered separately by
+    # test_already_strong_fit_overrides_the_prior_regardless_of_sample_size below --
+    # since _blend became strength-aware, "zero sample count" alone no longer implies
+    # "zero weight" when the fit's own separation is real.)
+    m_data, u_data = 0.5, 0.5
     settings = _settings_with_comparison("beans_contains_meat", m_data, u_data)
     attrs = [{"name": "beans_contains_meat", "description": "contains meat"}]
-    # n_true_pairs=0 -> weight=0 -> fully the prior.
     result = apply_nutrition_priors(settings, attrs, [{"attribute": "beans_contains_meat", "n_true_pairs": 0}])
     levels = result["comparisons"][0]["comparison_levels"]
     exact, other = levels[1], levels[2]
@@ -115,6 +120,37 @@ def test_nutrition_significant_attribute_blended_toward_prior():
     assert exact["u_probability"] == pytest.approx(NUTRIENT_DENSE_PRIOR[1])
     assert other["m_probability"] == pytest.approx(1 - NUTRIENT_DENSE_PRIOR[0])
     assert other["u_probability"] == pytest.approx(1 - NUTRIENT_DENSE_PRIOR[1])
+
+
+def test_already_strong_fit_overrides_the_prior_regardless_of_sample_size():
+    # Real case this exists for (breaded_vegetables, LLM_DEVICE=databricks):
+    # vegetable_type's real EM fit (m~0.9997, u~0.077) already separates far more
+    # confidently than CALORIE_DENSE_PRIOR itself asserts, even with n_true_pairs=0 --
+    # the prior should contribute ~nothing, not pull a strong fit down toward its own
+    # weaker assertion.
+    m_data, u_data = 0.9997, 0.077
+    settings = _settings_with_comparison("breaded_vegetables_vegetable_type", m_data, u_data)
+    attrs = [{"name": "breaded_vegetables_vegetable_type", "description": "The specific vegetable being fried or breaded."}]
+    result = apply_nutrition_priors(
+        settings, attrs, [{"attribute": "breaded_vegetables_vegetable_type", "n_true_pairs": 0}]
+    )
+    exact = result["comparisons"][0]["comparison_levels"][1]
+    assert exact["m_probability"] == pytest.approx(m_data, abs=1e-9)
+    assert exact["u_probability"] == pytest.approx(u_data, abs=1e-9)
+
+
+def test_weak_fit_still_falls_back_to_sample_size_floor():
+    # The real, previously-tuned beans_contains_meat case (see MAX_PRIOR_WEIGHT's
+    # docstring): a weak/ambiguous EM-only fit, well-populated with true pairs, should
+    # land on exactly the sample-size-only weight -- strength_weight contributes
+    # ~nothing here since the fit barely separates match from non-match at all.
+    m_data, u_data = 0.547, 0.479
+    settings = _settings_with_comparison("beans_contains_meat", m_data, u_data)
+    attrs = [{"name": "beans_contains_meat", "description": "contains meat"}]
+    result = apply_nutrition_priors(settings, attrs, [{"attribute": "beans_contains_meat", "n_true_pairs": 500}])
+    exact = result["comparisons"][0]["comparison_levels"][1]
+    expected_m = MAX_PRIOR_WEIGHT * m_data + (1 - MAX_PRIOR_WEIGHT) * NUTRIENT_DENSE_PRIOR[0]
+    assert exact["m_probability"] == pytest.approx(expected_m)
 
 
 def test_weight_caps_below_one_even_with_abundant_data():

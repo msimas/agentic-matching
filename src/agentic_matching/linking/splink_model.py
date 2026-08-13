@@ -219,12 +219,21 @@ def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
     comparison gets an m-probability estimate from at least one pass (a comparison's m
     can't be estimated in a pass that blocks on that same column). Used to be
     attrs[0]/`description` (description was always the second pass's blocking column,
-    via a short-text-prefix proxy rule) -- now attrs[0]/attrs[-1], since `description`
-    is no longer a comparison at all (see build_comparisons' docstring) and so has
-    nothing left to block on for EM's sake. With a single attribute there's only one
-    pass, and that attribute's own m isn't EM-estimated by it (pre-existing edge case,
-    unchanged by this -- a block would need at least 2 attributes for full EM coverage
-    either way).
+    via a short-text-prefix proxy rule) -- now attrs[0]/attrs[-1] when there are 2+
+    attributes, since `description` is no longer a comparison at all (see
+    build_comparisons' docstring) and so has nothing left to block on for EM's sake.
+
+    With exactly ONE attribute, blocking that attribute's own EM pass on itself would
+    be worse than merely leaving its m unestimated (the pre-existing edge case this
+    used to accept): verified real crash (breaded_vegetables, a tiny ~11 FNDDS x 59 OFF
+    block) -- the combined attribute-equality + search-text-prefix condition matched
+    ZERO comparison pairs, which splink treats as a hard EMTrainingException, not a
+    soft "untrained" outcome, taking down the whole round. The plain search-text-prefix
+    rule (`prefix_rule`, no attribute constraint -- the same fallback already used for
+    probability_two_random_records_match when there's no categorical attribute to
+    block on) is used for this single pass instead: a much broader net, unlikely to
+    produce zero pairs even on a tiny block, and it lets the sole attribute's own m
+    actually get estimated (not blocking on it this time).
 
     Every EM/u-estimation blocking rule that blocks on an attribute is combined (AND)
     with the search-text prefix condition, so a low-cardinality/skewed attribute can't
@@ -241,9 +250,16 @@ def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
     linker.training.estimate_u_using_random_sampling(max_pairs=2e6)
 
     comparison_cols = [a["name"] for a in attrs]
-    em_blocking_cols = [comparison_cols[0], comparison_cols[-1]] if len(comparison_cols) > 1 else comparison_cols
-    for col in dict.fromkeys(em_blocking_cols):  # de-dup, preserve order
-        rule = block_on(col, "substr(l.search_text, 1, 4)")
+    if len(comparison_cols) > 1:
+        em_blocking_rules = [
+            block_on(comparison_cols[0], "substr(l.search_text, 1, 4)"),
+            block_on(comparison_cols[-1], "substr(l.search_text, 1, 4)"),
+        ]
+    elif len(comparison_cols) == 1:
+        em_blocking_rules = [prefix_rule]
+    else:
+        em_blocking_rules = []
+    for rule in em_blocking_rules:
         linker.training.estimate_parameters_using_expectation_maximisation(rule)
 
 

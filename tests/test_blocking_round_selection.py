@@ -124,3 +124,59 @@ def test_single_round_is_returned_even_below_floors():
         round=0, rule={"fndds": {"keywords": ["x"]}}, metrics={"pair_completeness": 0.0, "reduction_ratio": 0.0}, rationale=""
     )
     assert select_best_blocking_round([only]) is only
+
+
+# -- seed_round as a scored baseline candidate ---------------------------------------
+#
+# Real case this covers (breaded_vegetables, LLM_DEVICE=databricks): the seed rule
+# scored n_fndds_block=16/n_off_block=89/pair_completeness=0.030, and the LLM's own
+# round 0 came back WORSE on every axis (10/53/0.006, having dropped every
+# exclude_keyword) -- round 0 was only ever compared against other LLM rounds before
+# this, never against the seed it was supposedly refining, so nothing caught a
+# regression right out of the gate.
+
+SEED_STRONG = BlockingRound(
+    round=-1,
+    rule={"fndds": {"keywords": ["seed"]}},
+    metrics={"pair_completeness": 0.030, "reduction_ratio": 0.9999},
+    rationale="unmodified seed rule (baseline)",
+)
+ROUND_0_REGRESSION = BlockingRound(
+    round=0,
+    rule={"fndds": {"keywords": ["seed", "worse"]}},
+    metrics={"pair_completeness": 0.006, "reduction_ratio": 0.9995},
+    rationale="dropped exclude_keywords",
+)
+
+
+def test_seed_beats_a_regressed_round_0():
+    final = _select_final_rule([ROUND_0_REGRESSION], SEED_STRONG)
+    assert final is SEED_STRONG.rule
+
+
+def test_genuinely_better_round_0_still_beats_the_seed():
+    final = _select_final_rule([ROUND_1_REAL_GAIN], SEED_STRONG)
+    assert final is ROUND_1_REAL_GAIN.rule
+
+
+def test_no_seed_behaves_exactly_as_before():
+    # seed_round defaults to None -- same result as calling with one argument.
+    assert _select_final_rule([ROUND_0, ROUND_1_REAL_GAIN]) is _select_final_rule(
+        [ROUND_0, ROUND_1_REAL_GAIN], None
+    )
+
+
+def test_seed_is_not_exempt_from_the_stabilization_check_on_the_last_real_round():
+    # The seed is a candidate alongside the rounds, not a veto over the stabilization
+    # rule: if the last real round stabilized against the one before it, it's still
+    # dropped from consideration -- the seed only gets to compete with what's left.
+    round_2_negligible = BlockingRound(
+        round=2,
+        rule={"fndds": {"keywords": ["yogurt", "Greek", "yoghurt", "plain"]}},
+        metrics={"pair_completeness": 0.605, "reduction_ratio": 0.9989},
+        rationale="added plain",
+    )
+    final = _select_final_rule([ROUND_0, ROUND_1_REAL_GAIN, round_2_negligible], SEED_STRONG)
+    # round_2_negligible dropped for stabilizing against round 1; seed (0.030) loses to
+    # round 1's real gain (0.6) on the merits.
+    assert final is ROUND_1_REAL_GAIN.rule

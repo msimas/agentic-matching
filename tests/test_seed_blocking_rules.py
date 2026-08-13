@@ -149,3 +149,52 @@ def test_off_side_also_sanitizes_never_useful_keywords():
     rule = {"off": {"keywords": ["yogurt", "with"]}}
     predicate = off_predicate_sql(rule, category_col=None)
     assert "with" not in predicate
+
+
+# -- case-insensitivity is guaranteed by the predicate itself, not the caller --------
+#
+# Verified real bug: blocking/agent_loop.py's materialize_block (and metrics.py's
+# block_sizes) both passed the RAW `description` column, never pre-lowered by the
+# caller -- DuckDB's LIKE is case-sensitive by default, so a lowercase keyword like
+# "fried mushrooms" against the real, Title-Case "Fried mushrooms" matched ZERO rows.
+# This silently broke the `breaded_vegetables` block (short, keyword-first FNDDS
+# descriptions -- the keyword needed to match starts capitalized) while going
+# unnoticed on blocks like `beans`, where a generic keyword often happens to already
+# appear lowercase mid-description ("Black beans"). These tests query genuinely
+# UN-lowered text -- unlike `_member`/`_category_member` above, which always
+# pre-lowered their fake data and so could never have caught this.
+
+
+def _raw_member(rule: dict, side: str, text: str) -> bool:
+    con = duckdb.connect()
+    text_col = "description" if side == "fndds" else "search_text"
+    predicate = (
+        fndds_predicate_sql(rule, category_col=None) if side == "fndds" else off_predicate_sql(rule, category_col=None)
+    )
+    row = con.execute(f"SELECT {predicate} FROM (SELECT ? AS {text_col})", [text]).fetchone()  # NOT lower()'d
+    con.close()
+    return bool(row[0])
+
+
+def test_fndds_keyword_matches_title_case_text_without_caller_lowering():
+    rule = {"fndds": {"keywords": ["fried mushrooms"]}}
+    assert _raw_member(rule, "fndds", "Fried mushrooms")
+
+
+def test_fndds_keyword_matches_when_match_is_at_the_very_start():
+    # The exact shape of the real breaded_vegetables failure: the keyword phrase is
+    # also the first word(s) of the description, so it's capitalized by normal
+    # sentence-case convention -- the case a mid-string match (like "bean" in "Black
+    # beans") could accidentally dodge even under the old, broken behavior.
+    rule = {"fndds": {"keywords": ["sweet potato fries"]}}
+    assert _raw_member(rule, "fndds", "Sweet potato fries, NFS")
+
+
+def test_off_keyword_matches_mixed_case_text_without_caller_lowering():
+    rule = {"off": {"keywords": ["yogurt"]}}
+    assert _raw_member(rule, "off", "Chobani Greek Yogurt, Plain")
+
+
+def test_exclude_keyword_matches_mixed_case_text_without_caller_lowering():
+    rule = {"fndds": {"keywords": ["yogurt"], "exclude_keywords": ["Frozen Yogurt"]}}
+    assert not _raw_member(rule, "fndds", "Frozen Yogurt, Chocolate")

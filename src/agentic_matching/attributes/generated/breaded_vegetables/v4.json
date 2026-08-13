@@ -2,7 +2,7 @@
   {
     "name": "breaded_vegetables_vegetable_type",
     "kind": "categorical",
-    "description": "The specific vegetable used in the breaded/fried product.",
+    "description": "The specific vegetable being breaded or fried.",
     "categories": {
       "onion": {
         "fndds_keywords": [
@@ -12,32 +12,68 @@
         "off_keywords": [
           "onion",
           "rings",
-          "cebolla"
+          "bhajis",
+          "pakoras"
         ]
       },
-      "pickle": {
+      "sweet_potato": {
         "fndds_keywords": [
-          "pickles"
-        ],
-        "off_keywords": []
-      },
-      "vegetable": {
-        "fndds_keywords": [
-          "vegetable"
+          "sweet potato",
+          "sweet",
+          "potato"
         ],
         "off_keywords": [
-          "vegetable",
-          "mixes"
+          "sweet potato",
+          "sweet",
+          "potato"
         ]
       },
-      "tempura": {
+      "mushroom": {
         "fndds_keywords": [
-          "tempura"
+          "mushroom"
         ],
-        "off_keywords": []
+        "off_keywords": [
+          "mushroom"
+        ]
       },
-      "other": {
-        "fndds_keywords": [],
+      "okra": {
+        "fndds_keywords": [
+          "okra"
+        ],
+        "off_keywords": [
+          "okra"
+        ]
+      },
+      "cauliflower": {
+        "fndds_keywords": [
+          "cauliflower"
+        ],
+        "off_keywords": [
+          "cauliflower"
+        ]
+      },
+      "green_bean": {
+        "fndds_keywords": [
+          "green bean",
+          "green"
+        ],
+        "off_keywords": [
+          "green bean",
+          "green"
+        ]
+      },
+      "eggplant": {
+        "fndds_keywords": [
+          "eggplant"
+        ],
+        "off_keywords": [
+          "eggplant"
+        ]
+      },
+      "tomato": {
+        "fndds_keywords": [
+          "tomato"
+        ],
         "off_keywords": []
       }
     }

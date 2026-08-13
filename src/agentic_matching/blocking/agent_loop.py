@@ -223,7 +223,7 @@ def select_best_blocking_round(rounds: list[BlockingRound]) -> BlockingRound:
     return max(rounds, key=_score)
 
 
-def _select_final_rule(rounds: list[BlockingRound]) -> dict[str, Any]:
+def _select_final_rule(rounds: list[BlockingRound], seed_round: BlockingRound | None = None) -> dict[str, Any]:
     """Pick which round's rule to materialize as the block's final definition.
 
     If the loop stopped because the *last* round's metrics were negligibly different
@@ -240,18 +240,32 @@ def _select_final_rule(rounds: list[BlockingRound]) -> dict[str, Any]:
     excluded from consideration entirely in this case -- not blindly replaced with
     "the round right before it": an earlier round further back could still be the
     genuinely best one on the merits, and select_best_blocking_round (not a fixed
-    index) is what finds it.
+    index) is what finds it. This "stabilized" check only ever compares two REAL
+    rounds (needs len(rounds) >= 2) -- it does NOT also fire for "round 0 barely
+    changed from the seed" with only one real round; `seed_round` (below) protects
+    that case a different way, by competing directly as a candidate rather than by
+    disqualifying round 0 for being too similar to it.
+
+    `seed_round` -- the hand-curated seed rule (see seed_rules.py), scored the same way
+    as any other round and included as a baseline candidate, NOT just a starting point
+    to show the LLM. Verified real gap this closes (breaded_vegetables,
+    LLM_DEVICE=databricks): the seed scored n_fndds_block=16/n_off_block=89/
+    pair_completeness=0.030, and the LLM's very first proposal (round 0) came back
+    WORSE on every axis (10/53/0.006, having also dropped every exclude_keyword) --
+    round 0 was never compared against the seed it was supposedly refining before this,
+    only against OTHER LLM rounds, so a regression right out of the gate had nothing to
+    catch it.
 
     Otherwise (the loop ran through every round without ever stabilizing, or stopped
-    for some other reason), every round is a fair candidate and
+    for some other reason), every round -- and the seed -- is a fair candidate and
     select_best_blocking_round picks among all of them -- this is what actually
-    protects against a later round being a real, non-negligible regression, which
-    nothing used to check at all (the old version of this function just took
-    `rounds[-1]` unconditionally in this case).
+    protects against a later round (or round 0 itself) being a real, non-negligible
+    regression, which nothing used to check at all (the old version of this function
+    just took `rounds[-1]` unconditionally in this case).
     """
-    candidates = rounds
+    candidates = ([seed_round] if seed_round else []) + rounds
     if len(rounds) >= 2 and _stabilized(rounds[-2].metrics, rounds[-1].metrics):
-        candidates = rounds[:-1]
+        candidates = [c for c in candidates if c is not rounds[-1]]
     return select_best_blocking_round(candidates).rule
 
 
@@ -354,6 +368,18 @@ def run_blocking_agent(
     notes = get_seed_notes(block_name)
     prev_metrics: dict[str, Any] | None = None
 
+    # The seed itself, scored as a baseline candidate for final selection below (round
+    # -1, never persisted as an artifact -- it's not a round the loop ran, just a
+    # reference point) -- NOT included in the returned `rounds` list, only in the
+    # separate candidate pool `_select_final_rule` chooses from. Verified real gap this
+    # closes (breaded_vegetables, LLM_DEVICE=databricks): a hand-curated seed scored
+    # n_fndds_block=16/n_off_block=89/pair_completeness=0.030, and the LLM's very first
+    # proposal (round 0) came back WORSE on every axis (10/53/0.006, having also
+    # dropped every exclude_keyword) -- nothing previously compared round 0 against the
+    # seed it was supposedly refining, only against OTHER LLM rounds, so that
+    # regression would have shipped as the final rule with no safety net at all.
+    seed_round = BlockingRound(round=-1, rule=prev_rule, metrics=evaluate_rule(block_name, seed_rule), rationale="unmodified seed rule (baseline)") if seed_rule else None
+
     for round_idx in range(agent_loop_settings.max_rounds):
         sys_p, user_p = build_blocking_prompt(
             block_name,
@@ -423,17 +449,26 @@ def run_blocking_agent(
             break
         prev_rule, prev_metrics = rule, metrics
 
-    final_rule = _select_final_rule(rounds)
+    final_rule = _select_final_rule(rounds, seed_round)
     if final_rule is not rounds[-1].rule:
-        final_round = next(r for r in rounds if r.rule is final_rule)
-        log.info(
-            "block '%s': round %d wasn't the best round produced -- using round %d's "
-            "rule instead (see _select_final_rule/select_best_blocking_round's "
-            "docstrings)",
-            block_name,
-            rounds[-1].round,
-            final_round.round,
-        )
+        all_candidates = ([seed_round] if seed_round else []) + rounds
+        final_round = next(r for r in all_candidates if r.rule is final_rule)
+        if final_round.round == -1:
+            log.info(
+                "block '%s': round %d wasn't the best round produced -- using the "
+                "unmodified seed rule instead (see _select_final_rule/"
+                "select_best_blocking_round's docstrings)",
+                block_name, rounds[-1].round,
+            )
+        else:
+            log.info(
+                "block '%s': round %d wasn't the best round produced -- using round %d's "
+                "rule instead (see _select_final_rule/select_best_blocking_round's "
+                "docstrings)",
+                block_name,
+                rounds[-1].round,
+                final_round.round,
+            )
     materialize_block(con, block_name, final_rule)
     con.close()
     client.log_usage_summary(label=f"{block_name} blocking, cumulative")

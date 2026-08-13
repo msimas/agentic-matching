@@ -152,8 +152,10 @@ def pair_completeness(
     # WWEIA-equivalent categorization, so the fndds-side category predicate can't be
     # evaluated against this proxy; category_col=None falls back to keywords only for
     # this side. The OFF side's real categories_tags IS available in gold_pairs.
-    fndds_pred = fndds_predicate_sql(rule, text_col="lower(fndds_style_description)", category_col=None)
-    off_pred = off_predicate_sql(rule, text_col="lower(coalesce(off_product_name, ''))", category_col="off_categories_tags")
+    # No explicit lower() needed here anymore -- _side_predicate_sql wraps its own
+    # text_col internally now (see its docstring for the real bug that fixed).
+    fndds_pred = fndds_predicate_sql(rule, text_col="fndds_style_description", category_col=None)
+    off_pred = off_predicate_sql(rule, text_col="coalesce(off_product_name, '')", category_col="off_categories_tags")
     row = con.execute(
         f"""
         WITH proxy AS (

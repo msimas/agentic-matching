@@ -1,18 +1,47 @@
 [
   {
-    "name": "vegetable_type",
+    "name": "breaded_vegetables_vegetable_type",
     "kind": "categorical",
-    "description": "A categorical attribute that explicitly identifies the specific vegetable used in the product, grounded in the actual terms observed in both FNDDS and OFF records within this block. This attribute replaces generic preparation-style indicators (like 'fried' or 'vegetable') because true matches must agree on the specific vegetable identity\u2014e.g., 'onion' vs. 'broccoli'. The categories are derived directly from the candidate_terms and sample pairs, ensuring real-world specificity and avoiding overgeneralization.",
+    "description": "The specific vegetable being breaded or fried.",
     "categories": {
       "onion": {
         "fndds_keywords": [
           "onion",
-          "onion rings"
+          "rings"
         ],
         "off_keywords": [
           "onion",
-          "onion rings",
-          "onion rings"
+          "rings"
+        ]
+      },
+      "potato": {
+        "fndds_keywords": [
+          "potato",
+          "sweet potato",
+          "tots",
+          "fries"
+        ],
+        "off_keywords": [
+          "potato",
+          "sweet",
+          "fries",
+          "tots"
+        ]
+      },
+      "mushroom": {
+        "fndds_keywords": [
+          "mushroom"
+        ],
+        "off_keywords": [
+          "mushroom"
+        ]
+      },
+      "okra": {
+        "fndds_keywords": [
+          "okra"
+        ],
+        "off_keywords": [
+          "okra"
         ]
       },
       "cauliflower": {
@@ -20,19 +49,25 @@
           "cauliflower"
         ],
         "off_keywords": [
-          "cauliflower",
-          "cauliflower tempura",
-          "cauliflower fritters"
+          "cauliflower"
         ]
       },
-      "broccoli": {
+      "eggplant": {
         "fndds_keywords": [
-          "broccoli"
+          "eggplant"
         ],
         "off_keywords": [
-          "broccoli",
-          "broccoli tempura",
-          "broccoli fritters"
+          "eggplant"
+        ]
+      },
+      "green_tomato": {
+        "fndds_keywords": [
+          "green tomato",
+          "green"
+        ],
+        "off_keywords": [
+          "green tomato",
+          "green"
         ]
       },
       "squash": {
@@ -41,48 +76,39 @@
           "summer squash"
         ],
         "off_keywords": [
-          "squash",
-          "summer squash"
+          "squash"
         ]
       },
-      "tomato": {
+      "yuca": {
         "fndds_keywords": [
-          "tomato",
-          "green tomatoes"
+          "yuca"
         ],
-        "off_keywords": [
-          "tomato",
-          "green tomatoes",
-          "tomato rings"
-        ]
-      },
-      "green_beans": {
-        "fndds_keywords": [
-          "green beans"
-        ],
-        "off_keywords": [
-          "green beans",
-          "green bean fritters"
-        ]
-      },
-      "eggplant": {
-        "fndds_keywords": [
-          "eggplant"
-        ],
-        "off_keywords": [
-          "eggplant",
-          "eggplant tempura"
-        ]
-      },
-      "okra": {
-        "fndds_keywords": [
-          "okra"
-        ],
-        "off_keywords": [
-          "okra",
-          "okra fritters"
-        ]
+        "off_keywords": []
       }
     }
+  },
+  {
+    "name": "breaded_vegetables_is_tempura",
+    "kind": "boolean",
+    "description": "Indicates if the vegetable is prepared as tempura.",
+    "fndds_keywords": [
+      "tempura"
+    ],
+    "off_keywords": [
+      "tempura"
+    ]
+  },
+  {
+    "name": "breaded_vegetables_is_pakora",
+    "kind": "boolean",
+    "description": "Indicates if the vegetable is prepared as pakora.",
+    "fndds_keywords": [
+      "pakora"
+    ],
+    "off_keywords": [
+      "pakora",
+      "bhajis",
+      "samosas"
+    ]
   }
 ]

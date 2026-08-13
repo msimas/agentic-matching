@@ -44,7 +44,27 @@ NUTRIENT_DENSE_TERMS = frozenset(
         "fat", "lard", "whey"
     }
 )
-CALORIE_DENSE_TERMS = frozenset({"sugar", "molasses", "honey", "syrup", "corn syrup", "brown sugar", "fried", "deep-fried", "fat"})
+CALORIE_DENSE_TERMS = frozenset(
+    {"sugar", "molasses", "honey", "syrup", "corn syrup", "brown sugar", "fried", "deep-fried", "fat"}
+)
+# "fried"/"deep-fried"/"fat" briefly lived outside this set (removed entirely) after a
+# verified real case: 'breaded_vegetables_vegetable_type' ("The specific vegetable
+# being fried or breaded.", a plain categorical identity attribute with nothing to do
+# with calorie density) got misclassified as calorie_dense purely because "fried"
+# appeared in its description, blending its EM-trained m (~0.9997, a genuinely strong
+# attribute) down to ~0.945 toward CALORIE_DENSE_PRIOR -- weak enough, combined with
+# this block's low match-probability prior after widening its blocking rule, that NO
+# pair ever crossed the 0.5 "predicted match" threshold. Removing the terms fixed that
+# one case but was a blunt instrument: it does nothing for the NEXT accidental
+# collision (any future block whose defining vocabulary happens to overlap a real
+# nutrition term), and it throws away "fried" as a genuine calorie-relevant signal for
+# attributes that actually deserve it. Reinstated once `_blend` (below) became aware of
+# how strongly the EM-trained comparison ALREADY separates match from non-match --
+# see `_blend`'s docstring: an already strongly-separated fit like vegetable_type's
+# now gets left almost untouched regardless of classification, so the false-positive
+# term match no longer matters, while a genuinely weak/ambiguous fit (the real
+# beans_contains_meat case this whole prior mechanism exists for) still gets pulled
+# toward the prior as before.
 # A product's vegetarian/vegan/plant-based status is arguably the MOST totalizing
 # nutrition-relevant distinction of the three groups here -- it isn't just one
 # ingredient's presence, it's a claim about the product's entire composition (a vegan
@@ -94,15 +114,24 @@ _GROUPS: list[tuple[str, frozenset[str], tuple[float, float]]] = [
 ]
 PRIOR_BY_GROUP: dict[str, tuple[float, float]] = {name: prior for name, _, prior in _GROUPS}
 
-# Blend weight (trust in EM's own estimate) scales linearly with observed true-pair
-# count up to this cap -- below it, the prior increasingly dominates; the cap itself
-# is < 1.0 (not "full trust once past a threshold") because these categories are
+# Sample-size blend weight (trust in EM's own estimate) scales linearly with observed
+# true-pair count up to this cap -- below it, the prior increasingly dominates; the cap
+# itself is < 1.0 (not "full trust once past a threshold") because these categories are
 # asserted to always carry some real nutrition-significance the calibration sample
-# alone shouldn't be allowed to fully override, no matter how much data it has.
-# Was 0.8; lowered per explicit instruction for a stronger nudge -- the prior now
-# always retains at least 55% influence, even at a well-populated sample like
-# beans_contains_meat's 500 true pairs. (0.25 was also tried and reverted -- see the
-# prior-target comment above for the real-data verification of why.)
+# alone shouldn't be allowed to fully override BY SAMPLE SIZE ALONE, no matter how much
+# data it has. Was 0.8; lowered per explicit instruction for a stronger nudge -- for a
+# genuinely weak/ambiguous fit (small OR large true-pair count, doesn't matter), the
+# prior now always retains at least 55% influence via this path, e.g. a well-populated
+# sample like beans_contains_meat's 500 true pairs. (0.25 was also tried and reverted
+# -- see the prior-target comment above for the real-data verification of why.)
+#
+# This is a FLOOR on trusting the data, not a ceiling on it -- see _blend's
+# strength_weight, a second, independent path that can push the effective weight above
+# this cap when the EM fit's OWN separation (m_data - u_data) already meets or exceeds
+# what the prior itself would assert, regardless of sample size. The two paths measure
+# different things (how much data went into the fit vs. how confident the fit already
+# is) and the stronger signal wins -- see _blend's docstring for the real case this
+# exists for.
 PRIOR_CONFIDENCE_PAIRS = 200
 MAX_PRIOR_WEIGHT = 0.45
 
@@ -129,8 +158,44 @@ def classify_nutrition_significance(attr: dict[str, Any]) -> str | None:
 
 
 def _blend(m_data: float, u_data: float, n_true_pairs: int, prior: tuple[float, float]) -> tuple[float, float]:
+    """Combines two independent signals for how much to trust the EM-trained fit over
+    the domain prior, and uses whichever trusts the data MORE (a floor on the prior's
+    influence, not something the two signals average together):
+
+      - `sample_weight`: how much real calibration data went into this fit (unchanged
+        from before this function was made strength-aware -- see PRIOR_CONFIDENCE_PAIRS/
+        MAX_PRIOR_WEIGHT's docstring). Capped below 1.0 deliberately: a nutrition-
+        significant category is asserted to always carry SOME domain-prior influence,
+        no matter how much calibration data backs it.
+      - `strength_weight`: how much the fit ALREADY separates match from non-match
+        (`m_data - u_data`) relative to how much separation the prior itself asserts
+        (`prior_m - prior_u`). Not capped below 1.0 -- if the data's own fit is already
+        at least as confidently separated as the prior would assert, there's nothing
+        left for the prior to usefully correct, so it's let all the way to zero
+        influence rather than artificially held back.
+
+    This is what lets a genuinely nutrition-significant TERM (e.g. "fried") stay in the
+    classifier's term list without a real, already-strongly-discriminative comparison
+    that happens to match it on an incidental word getting dragged down toward the
+    prior anyway. Verified real case (breaded_vegetables, LLM_DEVICE=databricks):
+    'breaded_vegetables_vegetable_type' ("The specific vegetable being fried or
+    breaded.") matched "fried" and got classified calorie_dense, but its EM fit
+    (m=0.9997, u=0.077, gap=0.923) already separates far more confidently than
+    CALORIE_DENSE_PRIOR itself asserts (gap=0.90-0.15=0.75) -- strength_weight =
+    min(1, 0.923/0.75) = 1.0, so the prior contributes nothing and the fit is returned
+    essentially untouched, instead of being pulled down to ~0.945 (the sample-size-only
+    weight of 0.45's result) and suppressing every match probability below the 0.5
+    threshold. A genuinely weak/ambiguous fit -- the real beans_contains_meat case this
+    whole prior mechanism was built for (EM-only m=0.547, u=0.479, gap=0.068, far below
+    NUTRIENT_DENSE_PRIOR's own 0.91 gap) -- gets a near-zero strength_weight and falls
+    back to the unchanged sample-size floor, so that verified, previously-tuned
+    behavior is untouched by this addition."""
     prior_m, prior_u = prior
-    weight = min(MAX_PRIOR_WEIGHT, n_true_pairs / PRIOR_CONFIDENCE_PAIRS) if PRIOR_CONFIDENCE_PAIRS else 0.0
+    sample_weight = min(MAX_PRIOR_WEIGHT, n_true_pairs / PRIOR_CONFIDENCE_PAIRS) if PRIOR_CONFIDENCE_PAIRS else 0.0
+    prior_gap = prior_m - prior_u
+    data_gap = m_data - u_data
+    strength_weight = min(1.0, max(0.0, data_gap / prior_gap)) if prior_gap > 0 else 0.0
+    weight = max(sample_weight, strength_weight)
     m = weight * m_data + (1 - weight) * prior_m
     u = weight * u_data + (1 - weight) * prior_u
     return m, u
