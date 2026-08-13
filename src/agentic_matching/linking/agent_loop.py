@@ -2,14 +2,16 @@
 LLM revises the attribute set -> retrain, stopping early once the (proxy) F1 against
 the calibration holdout stabilizes or no further revision is proposed. Each round's
 predictions summary, degeneracy flags, and holdout evaluation are logged to
-data/artifacts/linking_<block>_round<N>.json for SME review, and the full set of
-predicted pairs (not just the JSON's top/bottom-N examples) is written to
-data/artifacts/matches_<block>_round<N>.csv for direct inspection.
+<run_dir>/linking_round<N>.json for SME review, and the full set of predicted pairs
+(not just the JSON's top/bottom-N examples) is written to <run_dir>/matches_round<N>.csv
+for direct inspection -- <run_dir> is data/artifacts/<block>/<run_id>/, see config.py's
+run_artifacts_dir/new_run_id.
 
-data/artifacts/final_matches_<block>.csv (no round number -- overwritten each round, so
-it always reflects the latest run, same pattern as attributes/generated/<block>/
-latest.json) is the actual deliverable: one best FNDDS record per OFF/commercial-product
-record (see evaluate.best_match_per_off), not every candidate pair.
+<run_dir>/final_matches.csv (no round number -- overwritten each round, so it always
+reflects THIS run's latest state, same pattern attributes/generated/<block>/latest.json
+uses across runs) is the actual deliverable: one best FNDDS record per
+OFF/commercial-product record (see evaluate.best_match_per_off), not every candidate
+pair.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from agentic_matching.attributes.agent_loop import (
@@ -31,7 +34,7 @@ from agentic_matching.attributes.metrics import check_correlations
 from agentic_matching.attributes.revision import revise_attributes
 from agentic_matching.attributes.rules import attribute_set_signature, filter_reintroduced_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes
-from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings, round_temperature
+from agentic_matching.config import agent_loop_settings, new_run_id, round_temperature, run_artifacts_dir
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import (
     check_degeneracy,
@@ -142,7 +145,7 @@ def select_best_round(rounds: list[LinkingRound]) -> LinkingRound:
 
 
 def _train_and_evaluate_round(
-    block_name: str, round_idx: int, attrs: list[dict[str, Any]]
+    block_name: str, round_idx: int, attrs: list[dict[str, Any]], run_dir: Path
 ) -> tuple[LinkingRound, list[dict[str, Any]], Any, Any]:
     """Train + evaluate one round with the given attribute set, writing this round's
     matches CSV / final_matches CSV as a side effect. Returns the round record, the
@@ -218,7 +221,8 @@ def _train_and_evaluate_round(
     # topping out at match_probability 0.21. export_predictions_csv's own
     # `top_n` cap (default 5000) keeps the file a manageable size regardless.
     all_predictions = splink_model.predict(linker, threshold=0.0)
-    matches_csv_path = ARTIFACTS_DIR / f"matches_{block_name}_round{round_idx}.csv"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    matches_csv_path = run_dir / f"matches_round{round_idx}.csv"
     n_written = export_predictions_csv(all_predictions, attrs, matches_csv_path)
     log.info(
         "Wrote %s (top %d of %d candidate pairs by match_probability)",
@@ -232,7 +236,7 @@ def _train_and_evaluate_round(
     # always reflects this (latest) round, so a downstream consumer always reads
     # the current best output without needing to know which round number "won".
     final_matches = best_match_per_off(all_predictions)
-    final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
+    final_matches_csv_path = run_dir / "final_matches.csv"
     n_final_written = export_predictions_csv(final_matches, attrs, final_matches_csv_path, top_n=None)
     log.info(
         "Wrote %s (%d OFF records, each with its single best FNDDS match)",
@@ -258,7 +262,16 @@ def _train_and_evaluate_round(
     return round_obj, attrs, fndds_df, off_df
 
 
-def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list[LinkingRound]:
+def run_linking_agent(
+    block_name: str, client: ChatClient | None = None, run_dir: Path | None = None
+) -> list[LinkingRound]:
+    """`run_dir` -- where this run's artifacts (linking_round<N>.json,
+    matches_round<N>.csv, final_matches.csv) are written; data/artifacts/<block_name>/
+    <run_id>/. Defaults to a fresh one (own new_run_id()) for a standalone call (e.g.
+    scripts/07_run_splink_and_evaluate.py); outer_loop.py passes the SAME run_dir it's
+    using for blocking/attributes too, so one outer-loop invocation's artifacts all
+    land in one run folder together."""
+    run_dir = run_dir or run_artifacts_dir(block_name, new_run_id())
     client = client or get_llm_client()
     attrs = load_latest_attributes(block_name)
 
@@ -314,7 +327,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
 
     for round_idx in range(agent_loop_settings.max_rounds):
         try:
-            round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+            round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
             # Proactively drop any attribute whose OWN comparison is degenerate
             # (collapsed/label_switching/untrained -- see degenerate_attribute_columns's
             # docstring for why all three mean "no usable signal" for an attribute
@@ -354,7 +367,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
                 dropped_definitions.update({a["name"]: a for a in attrs if a["name"] in degenerate})
                 dropped_this_round.extend(degenerate)
                 attrs = [a for a in attrs if a["name"] not in degenerate]
-                round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs)
+                round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
         except Exception:
             # Training itself can fail, not just the LLM revision call below (see
             # splink_model.build_comparisons' docstring for the verified real case:
@@ -389,7 +402,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             auto_dropped.extend(dropped_this_round)
 
         rounds.append(round_result)
-        _write_artifact(block_name, rounds[-1])
+        _write_artifact(run_dir, rounds[-1])
 
         degeneracy_flags = round_result.degeneracy_flags
         holdout_eval = round_result.holdout_evaluation
@@ -602,7 +615,7 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             "block '%s': round %d regressed (plausibility n_pairs=%s, holdout f1=%s) "
             "relative to round %d (n_pairs=%s, f1=%s) -- restoring round %d's "
             "attributes as the final deliverable instead of leaving the regressed "
-            "round's results in final_matches_%s.csv.",
+            "round's results in final_matches.csv.",
             block_name,
             rounds[-1].round,
             rounds[-1].plausibility.get("n_pairs"),
@@ -611,13 +624,12 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
             best.plausibility.get("n_pairs"),
             best.holdout_evaluation.get("f1"),
             best.round,
-            block_name,
         )
         linker, _fndds_df, _off_df, _attrs = splink_model.build_linker(block_name, best.attributes)
         splink_model.train(linker, best.attributes)
         best_predictions = splink_model.predict(linker, threshold=0.0)
         final_matches = best_match_per_off(best_predictions)
-        final_matches_csv_path = ARTIFACTS_DIR / f"final_matches_{block_name}.csv"
+        final_matches_csv_path = run_dir / "final_matches.csv"
         n_final_written = export_predictions_csv(final_matches, best.attributes, final_matches_csv_path, top_n=None)
         log.info(
             "Restored %s from round %d (%d OFF records, each with its single best FNDDS match)",
@@ -630,9 +642,9 @@ def run_linking_agent(block_name: str, client: ChatClient | None = None) -> list
     return rounds
 
 
-def _write_artifact(block_name: str, r: LinkingRound) -> None:
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = ARTIFACTS_DIR / f"linking_{block_name}_round{r.round}.json"
+def _write_artifact(run_dir: Path, r: LinkingRound) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / f"linking_round{r.round}.json"
     payload = asdict(r)
     path.write_text(json.dumps(payload, indent=2, default=str))
     log.info("Wrote %s", path)

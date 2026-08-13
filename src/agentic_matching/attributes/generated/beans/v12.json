@@ -1,8 +1,8 @@
 [
   {
-    "name": "beans_bean_type",
+    "name": "bean_type",
     "kind": "categorical",
-    "description": "The specific type of bean (kidney, pinto, black, white, lima, soy, etc.).",
+    "description": "The specific type of bean (e.g., kidney, pinto, black, lima), derived from keywords in both the FNDDS description and OFF product name. This attribute replaces multiple mutually exclusive boolean flags (like is_kidney, is_pinto) to ensure conditional independence in the match model.",
     "categories": {
       "kidney": {
         "fndds_keywords": [
@@ -10,8 +10,9 @@
         ],
         "off_keywords": [
           "kidney",
-          "alubia ri\u00f1on",
-          "kidneybohnen"
+          "bohnen",
+          "fagioli",
+          "haricots verts"
         ]
       },
       "pinto": {
@@ -20,8 +21,9 @@
         ],
         "off_keywords": [
           "pinto",
-          "alubias rojas",
-          "feijao"
+          "haricots blancs",
+          "gotxoki",
+          "red beans"
         ]
       },
       "black": {
@@ -30,8 +32,19 @@
         ],
         "off_keywords": [
           "black",
-          "haricots noirs",
-          "haricots"
+          "haricots beurre",
+          "feijoao",
+          "dark red"
+        ]
+      },
+      "lima": {
+        "fndds_keywords": [
+          "lima"
+        ],
+        "off_keywords": [
+          "lima",
+          "tartinades",
+          "mogettes"
         ]
       },
       "white": {
@@ -40,16 +53,26 @@
         ],
         "off_keywords": [
           "white",
-          "haricots blancs",
-          "feij\u00e3o encarnado"
+          "alubias blancas",
+          "haricots blancs"
         ]
       },
-      "lima": {
+      "navy": {
         "fndds_keywords": [
-          "lima"
+          "navy"
         ],
         "off_keywords": [
-          "lima"
+          "navy"
+        ]
+      },
+      "chickpea": {
+        "fndds_keywords": [
+          "chickpea",
+          "garbanzo"
+        ],
+        "off_keywords": [
+          "chickpea",
+          "garbanzo"
         ]
       },
       "soy": {
@@ -60,13 +83,13 @@
           "soy"
         ]
       },
-      "garbanzo": {
+      "green": {
         "fndds_keywords": [
-          "garbanzo"
+          "green"
         ],
         "off_keywords": [
-          "garbanzo",
-          "chick pea"
+          "green",
+          "haricots verts"
         ]
       },
       "fava": {
@@ -76,81 +99,39 @@
         "off_keywords": [
           "fava"
         ]
-      },
-      "other": {
-        "fndds_keywords": [],
-        "off_keywords": []
       }
     }
   },
   {
-    "name": "beans_preparation_method",
-    "kind": "categorical",
-    "description": "The method of preparation (canned, dried, cooked).",
-    "categories": {
-      "canned": {
-        "fndds_keywords": [
-          "canned"
-        ],
-        "off_keywords": [
-          "canned"
-        ]
-      },
-      "dried": {
-        "fndds_keywords": [
-          "dried"
-        ],
-        "off_keywords": [
-          "dried"
-        ]
-      },
-      "cooked": {
-        "fndds_keywords": [
-          "cooked"
-        ],
-        "off_keywords": [
-          "cooked"
-        ]
-      },
-      "other": {
-        "fndds_keywords": [],
-        "off_keywords": []
-      }
-    }
-  },
-  {
-    "name": "beans_is_refried",
+    "name": "contains_meat",
     "kind": "boolean",
-    "description": "Whether the product is refried beans.",
+    "description": "Flag indicating whether the product contains meat (e.g., pork, bacon, ham, sausage, frankfurter). This attribute is critical for filtering out mixed products like 'pork and beans' or 'beans and franks', which should not match with pure bean products.",
     "fndds_keywords": [
-      "refried"
-    ],
-    "off_keywords": [
-      "refried"
-    ]
-  },
-  {
-    "name": "beans_contains_meat",
-    "kind": "boolean",
-    "description": "Indicates whether the product contains meat (pork, bacon, ham, sausage, frankfurter).",
-    "fndds_keywords": [
-      "meat",
       "pork",
       "bacon",
       "ham",
       "sausage",
       "frank",
-      "frankfurter",
-      "with meat"
+      "meat"
     ],
     "off_keywords": [
-      "meat",
       "pork",
       "bacon",
       "ham",
       "sausage",
-      "frankfurter",
-      "with meat"
+      "frank",
+      "meat"
+    ]
+  },
+  {
+    "name": "is_refried",
+    "kind": "boolean",
+    "description": "Indicates whether the product is described as refried, a preparation method that applies to certain beans (e.g., refried pinto or kidney beans), distinct from canned or dried states. This attribute is a modifier to bean type and should not be treated as an independent boolean with others like is_canned or is_dried, which would violate conditional independence. It is derived from explicit keywords in both descriptions.",
+    "fndds_keywords": [
+      "refried"
+    ],
+    "off_keywords": [
+      "refried"
     ]
   }
 ]

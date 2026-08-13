@@ -29,7 +29,7 @@ from agentic_matching.attributes.revision import revise_attributes
 from agentic_matching.attributes.rules import attribute_set_signature, compute_attribute_values, filter_valid_attributes
 from agentic_matching.attributes.seed_rules import get_seed_attribute_notes, get_seed_attributes
 from agentic_matching.blocking.metrics import CANONICAL_BLOCK_TERMS
-from agentic_matching.config import ARTIFACTS_DIR, BLOCKS_DIR, agent_loop_settings, round_temperature
+from agentic_matching.config import BLOCKS_DIR, agent_loop_settings, new_run_id, round_temperature, run_artifacts_dir
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_attribute_prompt
 
@@ -211,7 +211,18 @@ def _pooled_values(attrs: list[dict[str, Any]], fndds_df: pd.DataFrame, off_df: 
     return pd.concat([fndds_frame, off_frame], ignore_index=True)
 
 
-def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> list[AttributeRound]:
+def run_attribute_agent(
+    block_name: str, client: ChatClient | None = None, run_dir: Path | None = None
+) -> list[AttributeRound]:
+    """`run_dir` -- where this run's artifacts (attributes_round<N>.json) are written;
+    data/artifacts/<block_name>/<run_id>/. Defaults to a fresh one (own new_run_id())
+    for a standalone call (e.g. scripts/06_run_matching_agent.py); outer_loop.py passes
+    the SAME run_dir it's using for blocking/linking too, so one outer-loop
+    invocation's artifacts all land in one run folder together. Unrelated to
+    attributes/generated/<block>/latest.json (see this module's docstring) -- that's
+    the persisted, currently-in-effect attribute definition linking reads, not a
+    per-run diagnostic record, and isn't run-scoped."""
+    run_dir = run_dir or run_artifacts_dir(block_name, new_run_id())
     client = client or get_llm_client()
     fndds_df, off_df = _load_block(block_name)
     sample_pairs = _sample_pairs(fndds_df, off_df)
@@ -297,7 +308,7 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
         rounds.append(
             AttributeRound(round=round_idx, attributes=attrs, correlation_flags=correlation_flags, rationale=rationale)
         )
-        _write_artifact(block_name, rounds[-1])
+        _write_artifact(run_dir, rounds[-1])
 
         # Content-sensitive, not name-only (see attribute_set_signature's docstring
         # for the real case a name-only check missed: a "redefine" that keeps an
@@ -314,9 +325,9 @@ def run_attribute_agent(block_name: str, client: ChatClient | None = None) -> li
     return rounds
 
 
-def _write_artifact(block_name: str, r: AttributeRound) -> None:
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = ARTIFACTS_DIR / f"attributes_{block_name}_round{r.round}.json"
+def _write_artifact(run_dir: Path, r: AttributeRound) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / f"attributes_round{r.round}.json"
     path.write_text(json.dumps(asdict(r), indent=2))
     log.info(
         "Wrote %s (%d attributes, %d correlation flags)",

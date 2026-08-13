@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -26,13 +27,14 @@ from agentic_matching.blocking.metrics import evaluate_rule
 from agentic_matching.blocking.rules import fndds_predicate_sql, off_predicate_sql
 from agentic_matching.blocking.seed_rules import get_seed_notes, get_seed_rule
 from agentic_matching.config import (
-    ARTIFACTS_DIR,
     BLOCKS_DIR,
     FDC_DUCKDB_PATH,
     OFF_PARQUET,
     OFF_SEARCH_TEXT_PARQUET,
     agent_loop_settings,
+    new_run_id,
     round_temperature,
+    run_artifacts_dir,
 )
 from agentic_matching.llm.client import ChatClient, get_llm_client
 from agentic_matching.llm.prompts import build_blocking_prompt
@@ -288,8 +290,17 @@ def materialize_block(con: duckdb.DuckDBPyConnection, block_name: str, rule: dic
 
 
 def run_blocking_agent(
-    block_name: str, client: ChatClient | None = None, linking_feedback: str | None = None
+    block_name: str,
+    client: ChatClient | None = None,
+    linking_feedback: str | None = None,
+    run_dir: Path | None = None,
 ) -> list[BlockingRound]:
+    """`run_dir` -- where this run's artifacts (blocking_round<N>.json) are written;
+    data/artifacts/<block_name>/<run_id>/. Defaults to a fresh one (own new_run_id())
+    for a standalone call (e.g. scripts/05_run_blocking_agent.py); outer_loop.py passes
+    the SAME run_dir it's using for attributes/linking too, so one outer-loop
+    invocation's artifacts all land in one run folder together."""
+    run_dir = run_dir or run_artifacts_dir(block_name, new_run_id())
     client = client or get_llm_client()
     profiling.build(force=False)  # no-op if already built (see scripts/03_build_fdc_db.py)
     con = duckdb.connect(str(FDC_DUCKDB_PATH))
@@ -405,7 +416,7 @@ def run_blocking_agent(
             rule["off"].get("categories"),
             rule["off"].get("exclude_keywords"),
         )
-        _write_artifact(block_name, rounds[-1])
+        _write_artifact(run_dir, rounds[-1])
 
         if _stabilized(prev_metrics, metrics):
             log.info("Blocking loop for '%s' stabilized after round %d", block_name, round_idx)
@@ -429,8 +440,8 @@ def run_blocking_agent(
     return rounds
 
 
-def _write_artifact(block_name: str, r: BlockingRound) -> None:
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = ARTIFACTS_DIR / f"blocking_{block_name}_round{r.round}.json"
+def _write_artifact(run_dir: Path, r: BlockingRound) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / f"blocking_round{r.round}.json"
     path.write_text(json.dumps(asdict(r), indent=2))
     log.info("Wrote %s", path)

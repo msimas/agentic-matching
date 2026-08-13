@@ -42,20 +42,23 @@ uv run scripts/08_visualize_matches.py waterfall --block yogurt   # or: weights 
 uv run scripts/09_run_outer_loop.py --block yogurt
 ```
 
-Each agent-loop script logs every round to `data/artifacts/` for SME review:
-`blocking_<block>_round<N>.json` and `attributes_<block>_round<N>.json` hold the
-proposed rule/attributes plus their metrics, and `linking_<block>_round<N>.json` holds
-degeneracy flags, holdout evaluation, and a plausibility summary (score distribution,
-top/bottom-10 examples). For the linking stage specifically, `scripts/07_...` also
-writes every predicted FNDDS<->OFF pair (not just the JSON's top/bottom-10) to
-**`data/artifacts/matches_<block>_round<N>.csv`** — sorted by `match_probability`
-descending, with each matching attribute's value on both sides alongside it — open
-that directly in a spreadsheet to inspect the actual match results.
+Each agent-loop script logs every round to `data/artifacts/<block>/<run_id>/` for SME
+review, one timestamped directory per top-level invocation (see config.py's
+`new_run_id`/`run_artifacts_dir`) so successive runs of the same block don't overwrite
+each other and can be compared over time. Within a run's directory:
+`blocking_round<N>.json` and `attributes_round<N>.json` hold the proposed
+rule/attributes plus their metrics, and `linking_round<N>.json` holds degeneracy flags,
+holdout evaluation, and a plausibility summary (score distribution, top/bottom-10
+examples). For the linking stage specifically, `scripts/07_...` also writes every
+predicted FNDDS<->OFF pair (not just the JSON's top/bottom-10) to
+**`matches_round<N>.csv`** — sorted by `match_probability` descending, with each
+matching attribute's value on both sides alongside it — open that directly in a
+spreadsheet to inspect the actual match results.
 
-**`data/artifacts/final_matches_<block>.csv`** (no round number — overwritten each
-round, reflects the *best* round the loop produced, not necessarily the last one; see
-`select_best_round` below) is the actual deliverable, distinct from the review CSV
-above: `linking/evaluate.py::best_match_per_off` collapses every candidate pair down to
+**`final_matches.csv`** (no round number — overwritten each round, reflects the *best*
+round the loop produced this run, not necessarily the last one; see `select_best_round`
+below) is the actual deliverable, distinct from the review CSV above:
+`linking/evaluate.py::best_match_per_off` collapses every candidate pair down to
 the single best (highest `match_probability`) FNDDS record per OFF/commercial-product
 record. The real goal here is attaching nutritional information (FNDDS) to commercial
 products — a product should end up with *one* nutrition profile attached, not several
@@ -90,7 +93,7 @@ has, rather than blindly using whichever round happened to run last:
   4's revision collapsed real-world matching to **zero** confident matches out of 296K
   candidates, while its holdout f1 (0.024) merely looked "back to round 0's baseline" —
   not obviously catastrophic on that number alone. If the loop's last round isn't the
-  selected best one, `final_matches_<block>.csv` is regenerated from the best round's
+  selected best one, `final_matches.csv` is regenerated from the best round's
   attributes before the loop returns (cheap: splink training/prediction is seconds,
   the LLM call is what's expensive). `outer_loop.py`'s own reported metrics and
   `diagnose_blocking_problem` use the same selection, not the last linking round.
@@ -109,7 +112,9 @@ finding is fed back into another blocking round (as `prior_linking_findings`, vi
 `run_blocking_agent`'s `linking_feedback` parameter) and the whole pipeline runs again —
 bounded by `AGENT_MAX_OUTER_ROUNDS` (default 2: "give re-blocking one chance," not an
 open-ended search). Each round is logged to
-`data/artifacts/outer_loop_<block>_round<N>.json`.
+`data/artifacts/<block>/<run_id>/outer_loop_round<N>.json`, in the same one-run-one-
+directory `<run_id>` blocking/attributes/linking's own artifacts land in (see above) —
+one `run_outer_loop` call, one shared run directory across every stage it includes.
 
 `--steps` runs only a subset of the three stages against a block already partway
 through the pipeline, e.g.:
@@ -123,11 +128,18 @@ uv run scripts/09_run_outer_loop.py --block beans --steps linking
 ```
 
 A skipped stage isn't rerun with cached results — it's just not touched, and whichever
-later stages you did include use its last persisted output as-is. The re-blocking
-feedback loop above only fires when `--steps` includes both `blocking` and `linking`
-(nothing to re-block *in response to* otherwise) — with either excluded, it runs a
-single round and logs a warning instead of looping if a blocking-shaped problem is
-found but can't be acted on this run.
+later stages you did include use its last persisted output as-is. Its diagnostic
+artifacts are still copied forward from the most recent previous run into this run's
+directory, though, so a `--steps linking` run's folder still looks like a complete
+record (blocking/attributes artifacts included, just carried over rather than freshly
+produced) instead of one silently missing files every other run has. If no previous
+run has those artifacts to copy — the very first run for a block, or the previous run
+also skipped that stage — this fails loudly (`FileNotFoundError`) rather than
+silently leaving the new run's folder incomplete: run with the stage included at least
+once first. The re-blocking feedback loop above only fires when `--steps` includes both
+`blocking` and `linking` (nothing to re-block *in response to* otherwise) — with either
+excluded, it runs a single round and logs a warning instead of looping if a
+blocking-shaped problem is found but can't be acted on this run.
 
 ## Visualizing matches (`scripts/08_visualize_matches.py`)
 

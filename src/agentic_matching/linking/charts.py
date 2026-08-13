@@ -1,6 +1,8 @@
 """Splink's built-in Altair charts, for visually evaluating a block's trained linkage
-model -- saved as standalone HTML files under data/artifacts/ so they can be opened
-directly in a browser (no notebook needed).
+model -- saved as standalone HTML files under the block's most recent run directory
+(data/artifacts/<block>/<run_id>/, see config.latest_run_dir) so they can be opened
+directly in a browser (no notebook needed), sitting alongside that run's own
+blocking/attributes/linking artifacts rather than in a separate flat location.
 
 Retrains the model fresh each call (same as every other consumer of a trained linker in
 this codebase -- see linking/evaluate.py, linking/degeneracy_check.py -- nothing
@@ -25,13 +27,35 @@ import pandas as pd
 from splink import Linker
 
 from agentic_matching.attributes.agent_loop import load_latest_attributes
-from agentic_matching.config import ARTIFACTS_DIR
+from agentic_matching.config import ARTIFACTS_DIR, latest_run_dir
 from agentic_matching.linking import splink_model
 from agentic_matching.linking.degeneracy_check import check_degeneracy, export_trained_settings
 
 log = logging.getLogger(__name__)
 
 SelectionMode = Literal["stratified", "top", "bottom", "borderline"]
+
+
+def _default_chart_path(block_name: str, chart_kind: str) -> Path:
+    """Where a chart lands when the caller doesn't pass an explicit `out_path` -- the
+    block's most recent run directory (see config.latest_run_dir), not a new one:
+    generating a chart isn't itself a pipeline run, it's a follow-up visualization of
+    a run that already happened, so it belongs alongside that run's own artifacts, not
+    off starting a fresh timestamped directory of its own.
+
+    Raises FileNotFoundError, not a silent fallback to some flat/default location, if
+    the block has no run directory yet -- run the pipeline (e.g.
+    scripts/09_run_outer_loop.py) at least once first; a chart with nowhere real to
+    live is a sign of that, not something to paper over with a made-up path."""
+    run_dir = latest_run_dir(block_name)
+    if run_dir is None:
+        raise FileNotFoundError(
+            f"No run directory exists yet for block '{block_name}' under "
+            f"{ARTIFACTS_DIR / block_name} -- run the pipeline (e.g. "
+            "scripts/09_run_outer_loop.py or scripts/07_run_splink_and_evaluate.py) "
+            "at least once before generating charts, or pass an explicit out_path."
+        )
+    return run_dir / f"chart_{chart_kind}.html"
 
 
 class ChartGenerationError(RuntimeError):
@@ -86,11 +110,11 @@ def _build_trained_linker(block_name: str) -> tuple[Linker, list[dict[str, Any]]
             "block '%s': trained probability_two_random_records_match was exactly %s "
             "-- nudging it to %.0e for chart rendering only (splink's chart code "
             "can't handle the literal degenerate value); the real value is still what "
-            "degeneracy_flags/linking_%s_round*.json report.",
+            "degeneracy_flags/linking_round*.json (under the block's run directory) "
+            "report.",
             block_name,
             p2r,
             _MIN_PROBABILITY_TWO_RANDOM_RECORDS_MATCH,
-            block_name,
         )
         linker._settings_obj._probability_two_random_records_match = _MIN_PROBABILITY_TWO_RANDOM_RECORDS_MATCH
 
@@ -121,7 +145,8 @@ def _run_splink_chart_call(fn, block_name: str, chart_kind: str, degeneracy_flag
             f"({type(e).__name__}: {e}){flags_desc}. This is a failure inside splink's "
             "own chart-rendering code (commonly triggered by a very small/degenerate "
             "block), not something agentic_matching's own code can fix directly -- see "
-            f"data/artifacts/linking_{block_name}_round*.json for the full evaluation."
+            f"linking_round*.json under the most recent data/artifacts/{block_name}/<run_id>/ "
+            "for the full evaluation."
         ) from e
 
 
@@ -163,7 +188,7 @@ def waterfall_chart(
     records = select_records(predictions, n=n, mode=mode)
     if not records:
         raise ValueError(f"No predicted pairs for block '{block_name}' at threshold={threshold}.")
-    out_path = out_path or ARTIFACTS_DIR / f"chart_waterfall_{block_name}.html"
+    out_path = out_path or _default_chart_path(block_name, "waterfall")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _create_and_save() -> None:
@@ -182,7 +207,7 @@ def match_weights_chart(block_name: str, out_path: Path | None = None) -> Path:
     'strength of evidence' for each comparison level) -- doesn't need predictions,
     just the trained model."""
     linker, degeneracy_flags = _build_trained_linker(block_name)
-    out_path = out_path or ARTIFACTS_DIR / f"chart_match_weights_{block_name}.html"
+    out_path = out_path or _default_chart_path(block_name, "match_weights")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _create_and_save() -> None:
@@ -197,7 +222,7 @@ def match_weights_histogram(block_name: str, threshold: float = 0.0, out_path: P
     """Save a histogram of match weights across every predicted pair in the block."""
     linker, degeneracy_flags = _build_trained_linker(block_name)
     df_predict = linker.inference.predict(threshold_match_probability=threshold)
-    out_path = out_path or ARTIFACTS_DIR / f"chart_histogram_{block_name}.html"
+    out_path = out_path or _default_chart_path(block_name, "histogram")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _create_and_save() -> None:
@@ -216,7 +241,7 @@ def comparison_viewer_dashboard(
     review, at the cost of a larger HTML file."""
     linker, degeneracy_flags = _build_trained_linker(block_name)
     df_predict = linker.inference.predict(threshold_match_probability=threshold)
-    out_path = out_path or ARTIFACTS_DIR / f"chart_dashboard_{block_name}.html"
+    out_path = out_path or _default_chart_path(block_name, "dashboard")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _run_splink_chart_call(
         lambda: linker.visualisations.comparison_viewer_dashboard(

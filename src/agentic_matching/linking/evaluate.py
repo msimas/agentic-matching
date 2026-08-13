@@ -55,8 +55,9 @@ def _load_block_holdout(block_name: str) -> pd.DataFrame:
     # beans' off-side), and even that seed initially missed 'jelly'/'vanilla bean'/
     # 'protein powder'/'crisps' (162 jelly-bean-candy holdout rows slipped through
     # unexcluded, verified by querying data/calibration/holdout.parquet directly)
-    # because those excludes only existed in a real round's LEARNED rule
-    # (data/artifacts/blocking_beans_round1.json), not in the static seed file. A more
+    # because those excludes only existed in a real round's LEARNED rule (that run's
+    # blocking_round1.json, under data/artifacts/beans/<run_id>/), not in the static
+    # seed file. A more
     # systemic fix would draw excludes from the block's actual current/best rule
     # instead of (or in addition to) the seed -- deliberately not done yet: that
     # rule is itself LLM-proposed, so using it here to define the ground truth the

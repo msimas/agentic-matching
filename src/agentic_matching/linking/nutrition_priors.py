@@ -44,7 +44,7 @@ NUTRIENT_DENSE_TERMS = frozenset(
         "fat", "lard", "whey"
     }
 )
-CALORIE_DENSE_TERMS = frozenset({"sugar", "molasses", "honey", "syrup", "corn syrup", "brown sugar"})
+CALORIE_DENSE_TERMS = frozenset({"sugar", "molasses", "honey", "syrup", "corn syrup", "brown sugar", "fried", "deep-fried", "fat"})
 # A product's vegetarian/vegan/plant-based status is arguably the MOST totalizing
 # nutrition-relevant distinction of the three groups here -- it isn't just one
 # ingredient's presence, it's a claim about the product's entire composition (a vegan

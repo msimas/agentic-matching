@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import agentic_matching.config as config
 import agentic_matching.outer_loop as outer_loop
 from agentic_matching.linking.agent_loop import LinkingRound
 from agentic_matching.outer_loop import MIN_CANDIDATE_PAIRS, diagnose_blocking_problem, run_outer_loop
@@ -94,35 +95,56 @@ class _Recorder:
 
 
 @pytest.fixture
-def fakes(monkeypatch):
+def fakes(monkeypatch, tmp_path):
     blocking = _Recorder()
     attributes = _Recorder()
     linking = _Recorder()
     monkeypatch.setattr(outer_loop, "run_blocking_agent", blocking)
     monkeypatch.setattr(outer_loop, "run_attribute_agent", attributes)
     monkeypatch.setattr(outer_loop, "run_linking_agent", linking)
+    # _copy_forward_skipped_stage (via latest_run_dir) reads config.ARTIFACTS_DIR
+    # directly, not outer_loop's own copy of the name -- patching THIS module's
+    # ARTIFACTS_DIR is what actually redirects it into tmp_path, since latest_run_dir
+    # is defined in config.py and looks up its own module-global at call time.
+    monkeypatch.setattr(config, "ARTIFACTS_DIR", tmp_path)
     return {"blocking": blocking, "attributes": attributes, "linking": linking}
 
 
-def test_default_steps_calls_all_three(fakes, tmp_path, monkeypatch):
-    monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=Mock())
+def _seed_previous_run(tmp_path, block_name="beans", run_id="00000000_000000"):
+    """A fake prior run directory carrying every stage's expected artifacts -- for
+    tests that skip a stage and need _copy_forward_skipped_stage to find something
+    real to copy instead of raising."""
+    prev = tmp_path / block_name / run_id
+    prev.mkdir(parents=True)
+    (prev / "blocking_round0.json").write_text("{}")
+    (prev / "attributes_round0.json").write_text("{}")
+    (prev / "linking_round0.json").write_text("{}")
+    (prev / "matches_round0.csv").write_text("")
+    (prev / "final_matches.csv").write_text("")
+    return prev
+
+
+def test_default_steps_calls_all_three(fakes, tmp_path):
+    run_dir = tmp_path / "beans" / "current"
+    run_outer_loop("beans", client=Mock(), run_dir=run_dir)
     assert len(fakes["blocking"].calls) == 1
     assert len(fakes["attributes"].calls) == 1
     assert len(fakes["linking"].calls) == 1
 
 
-def test_skipping_blocking_does_not_call_it(fakes, tmp_path, monkeypatch):
-    monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"))
+def test_skipping_blocking_does_not_call_it(fakes, tmp_path):
+    _seed_previous_run(tmp_path)
+    run_dir = tmp_path / "beans" / "current"
+    run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"), run_dir=run_dir)
     assert fakes["blocking"].calls == []
     assert len(fakes["attributes"].calls) == 1
     assert len(fakes["linking"].calls) == 1
 
 
-def test_only_linking_step_skips_blocking_and_attributes(fakes, tmp_path, monkeypatch):
-    monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
-    run_outer_loop("beans", client=Mock(), steps=("linking",))
+def test_only_linking_step_skips_blocking_and_attributes(fakes, tmp_path):
+    _seed_previous_run(tmp_path)
+    run_dir = tmp_path / "beans" / "current"
+    run_outer_loop("beans", client=Mock(), steps=("linking",), run_dir=run_dir)
     assert fakes["blocking"].calls == []
     assert fakes["attributes"].calls == []
     assert len(fakes["linking"].calls) == 1
@@ -143,9 +165,49 @@ def test_cannot_loop_without_blocking_and_linking_stops_after_one_round(fakes, t
     # but "blocking" isn't in steps, so there's nothing to loop for; should run exactly
     # once regardless of max_outer_rounds.
     fakes["linking"]._linking_rounds = [_round(n_candidate_pairs=1)]
-    monkeypatch.setattr(outer_loop, "ARTIFACTS_DIR", tmp_path)
+    _seed_previous_run(tmp_path)
+    run_dir = tmp_path / "beans" / "current"
     monkeypatch.setattr(outer_loop.agent_loop_settings, "max_outer_rounds", 5)
-    rounds = run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"))
+    rounds = run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"), run_dir=run_dir)
     assert len(rounds) == 1
     assert rounds[0].trigger is not None
     assert len(fakes["linking"].calls) == 1
+
+
+# -- copy-forward / error-out for a skipped stage's artifacts ------------------------
+
+
+def test_skipped_stage_with_no_previous_run_raises(fakes, tmp_path):
+    # No previous run at all for this block -- nothing to copy blocking's artifacts
+    # forward from, so this must fail loudly rather than silently proceed.
+    run_dir = tmp_path / "beans" / "current"
+    with pytest.raises(FileNotFoundError, match="blocking"):
+        run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"), run_dir=run_dir)
+
+
+def test_skipped_stage_whose_previous_run_also_lacks_it_raises(fakes, tmp_path):
+    # A previous run exists, but it never actually produced blocking artifacts either
+    # (e.g. it also skipped blocking) -- still nothing real to copy forward.
+    prev = tmp_path / "beans" / "00000000_000000"
+    prev.mkdir(parents=True)
+    (prev / "attributes_round0.json").write_text("{}")
+    (prev / "linking_round0.json").write_text("{}")
+    run_dir = tmp_path / "beans" / "current"
+    with pytest.raises(FileNotFoundError, match="blocking"):
+        run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"), run_dir=run_dir)
+
+
+def test_skipped_stage_artifacts_copied_into_run_dir(fakes, tmp_path):
+    _seed_previous_run(tmp_path)
+    run_dir = tmp_path / "beans" / "current"
+    run_outer_loop("beans", client=Mock(), steps=("attributes", "linking"), run_dir=run_dir)
+    assert (run_dir / "blocking_round0.json").exists()  # copied forward, blocking was skipped
+    assert (run_dir / "blocking_round0.json").read_text() == "{}"
+
+
+def test_only_linking_step_copies_forward_both_blocking_and_attributes(fakes, tmp_path):
+    _seed_previous_run(tmp_path)
+    run_dir = tmp_path / "beans" / "current"
+    run_outer_loop("beans", client=Mock(), steps=("linking",), run_dir=run_dir)
+    assert (run_dir / "blocking_round0.json").exists()
+    assert (run_dir / "attributes_round0.json").exists()

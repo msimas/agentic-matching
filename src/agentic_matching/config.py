@@ -6,6 +6,7 @@ variables here (see .env.example) so no other module needs to change when they d
 
 from __future__ import annotations
 
+import datetime
 import logging
 from pathlib import Path
 
@@ -27,7 +28,48 @@ FDC_DUCKDB_PATH = DATA_DIR / "fdc.duckdb"
 
 CALIBRATION_DIR = DATA_DIR / "calibration"
 BLOCKS_DIR = DATA_DIR / "blocks"
+# Base directory for agent-loop run artifacts -- see run_artifacts_dir/new_run_id/
+# latest_run_dir below for the actual data/artifacts/<block>/<run_id>/ layout each run
+# writes under. This constant alone is not where any individual run's files live
+# anymore (that's ARTIFACTS_DIR / block_name / run_id) -- kept as the shared root both
+# helpers below build on, and for anything that genuinely wants the whole tree (e.g. a
+# future "list all blocks with any runs" tool).
 ARTIFACTS_DIR = DATA_DIR / "artifacts"
+
+
+def new_run_id() -> str:
+    """A sortable, filesystem-safe identifier for one top-level agent-loop invocation
+    (a single run_blocking_agent/run_attribute_agent/run_linking_agent/run_outer_loop
+    call) -- e.g. "20260812_194703". Lexicographic sort order matches chronological
+    order (UTC, zero-padded, no separators ambiguous across filesystems) precisely so
+    `latest_run_dir` below can find "the most recent run" with a plain max() over
+    directory names, no separate pointer file or symlink to keep in sync."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def run_artifacts_dir(block_name: str, run_id: str) -> Path:
+    """Where one run's artifacts (blocking/attributes/linking round records, matches
+    CSVs, outer_loop summaries) are written -- data/artifacts/<block_name>/<run_id>/.
+    Does NOT create the directory -- callers create it (or not) depending on whether
+    they're about to write into it or just checking whether it exists."""
+    return ARTIFACTS_DIR / block_name / run_id
+
+
+def latest_run_dir(block_name: str, before: str | None = None) -> Path | None:
+    """The most recently created run directory for `block_name`, or None if it has no
+    runs yet. Run directories sort lexicographically by their `new_run_id` timestamp,
+    so this is `max()` over what's actually on disk -- not a separate "latest" pointer
+    that could drift out of sync with reality.
+
+    `before`, if given (a run_id, not a full path), excludes that run from
+    consideration -- for a run already in progress checking "what's the most recent
+    OTHER run to copy artifacts forward from" (see outer_loop.py), which must not find
+    its own not-yet-complete directory."""
+    block_dir = ARTIFACTS_DIR / block_name
+    if not block_dir.is_dir():
+        return None
+    run_dirs = sorted(p for p in block_dir.iterdir() if p.is_dir() and p.name != before)
+    return run_dirs[-1] if run_dirs else None
 
 # Corpus-wide profiling (token document frequency, categorical field distributions)
 # computed once over the *full* datasets -- shared by both the blocking and

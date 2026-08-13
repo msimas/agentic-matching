@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from agentic_matching.attributes.agent_loop import run_attribute_agent
 from agentic_matching.blocking.agent_loop import run_blocking_agent
-from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings
+from agentic_matching.config import ARTIFACTS_DIR, agent_loop_settings, new_run_id, latest_run_dir, run_artifacts_dir
 from agentic_matching.linking.agent_loop import LinkingRound, run_linking_agent, select_best_round
 from agentic_matching.linking.degeneracy_check import degenerate_attribute_columns
 from agentic_matching.llm.client import ChatClient, get_llm_client
@@ -44,6 +46,74 @@ log = logging.getLogger(__name__)
 # which is also the order they run in within a round regardless of the order `steps`
 # lists them.
 ALL_STEPS = ("blocking", "attributes", "linking")
+
+# The artifact filename glob(s) each stage is expected to have left behind in a run
+# directory -- used by _copy_forward_skipped_stage (below) both to find what to copy
+# forward from the most recent previous run when a stage is skipped this run, and to
+# recognize when that previous run doesn't actually have them either (also skipped, or
+# never completed) so that's a clear, loud error instead of a silently incomplete
+# folder.
+STAGE_ARTIFACT_GLOBS: dict[str, tuple[str, ...]] = {
+    "blocking": ("blocking_round*.json",),
+    "attributes": ("attributes_round*.json",),
+    "linking": ("linking_round*.json", "matches_round*.csv", "final_matches.csv"),
+}
+
+
+def _copy_forward_skipped_stage(block_name: str, run_dir: Path, stage: str) -> None:
+    """Copy `stage`'s artifacts from the most recent PREVIOUS run into `run_dir`, so a
+    run that skips a stage (see run_outer_loop's `steps`) still leaves a complete,
+    self-contained folder behind -- one that looks like every other run's, not one
+    silently missing the files a skipped stage would normally produce.
+
+    Raises FileNotFoundError -- not a silent no-op -- if there's no previous run for
+    this block at all, or the most recent previous run doesn't actually have this
+    stage's expected artifacts either (e.g. it also skipped that stage, or failed
+    before completing it). An incomplete copy would be worse than an incomplete
+    folder: it would look complete without being one, whereas this fails loudly at the
+    moment the gap would first cause a problem, not later against best_round_so_far,
+    diagnose_blocking_problem, or an SME who assumes something a run's folder claims
+    to have but doesn't."""
+    previous = latest_run_dir(block_name, before=run_dir.name)
+    if previous is None:
+        raise FileNotFoundError(
+            f"--steps skips '{stage}' for block '{block_name}', but no previous run "
+            f"exists under {ARTIFACTS_DIR / block_name} to copy its artifacts forward "
+            f"from. Run with '{stage}' included at least once before skipping it."
+        )
+    # Resolve every pattern BEFORE creating run_dir or copying anything -- a partial
+    # failure partway through must leave no trace (no empty/half-populated run_dir
+    # behind), not just fail loudly. Verified real case while building this: an early
+    # version created run_dir eagerly, then raised on the first missing pattern,
+    # leaving a stray empty directory on disk that a subsequent latest_run_dir lookup
+    # could itself mistake for a "previous run."
+    matches_by_pattern: dict[str, list[Path]] = {}
+    for pattern in STAGE_ARTIFACT_GLOBS[stage]:
+        matches = list(previous.glob(pattern))
+        if not matches:
+            raise FileNotFoundError(
+                f"--steps skips '{stage}' for block '{block_name}', but the most recent "
+                f"previous run ({previous.name}) has no '{pattern}' artifact(s) to copy "
+                f"forward -- it likely also skipped '{stage}' or never completed it. "
+                f"Run with '{stage}' included at least once before skipping it."
+            )
+        matches_by_pattern[pattern] = matches
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for matches in matches_by_pattern.values():
+        for f in matches:
+            shutil.copy2(f, run_dir / f.name)
+            copied += 1
+    log.info(
+        "block '%s': '%s' skipped this run -- copied %d artifact(s) forward from "
+        "previous run %s into %s.",
+        block_name,
+        stage,
+        copied,
+        previous.name,
+        run_dir.name,
+    )
 
 # Every real linking round this project has produced, even for its thinnest/most
 # degenerate block ("breaded_vegetables" at its narrowest), has cleared several hundred
@@ -134,7 +204,10 @@ def diagnose_blocking_problem(rounds: list[LinkingRound]) -> str | None:
 
 
 def run_outer_loop(
-    block_name: str, client: ChatClient | None = None, steps: Sequence[str] = ALL_STEPS
+    block_name: str,
+    client: ChatClient | None = None,
+    steps: Sequence[str] = ALL_STEPS,
+    run_dir: Path | None = None,
 ) -> list[OuterRound]:
     """Run the pipeline stages named in `steps` (any non-empty subset of
     "blocking"/"attributes"/"linking", pipeline order regardless of how `steps` orders
@@ -146,6 +219,20 @@ def run_outer_loop(
     tool for "just redo attribute selection against the existing block" (steps=
     ("attributes", "linking")) or "just redo linking against the existing attributes"
     (steps=("linking",)) without paying for a stage you don't want re-run.
+
+    Every stage this run actually includes writes its artifacts into ONE shared
+    `run_dir` (data/artifacts/<block_name>/<run_id>/, see config.run_artifacts_dir) --
+    a fresh one per call by default, so each `run_outer_loop` invocation leaves behind
+    its own timestamped, comparable-over-time record instead of overwriting the
+    previous run's files. A SKIPPED stage's artifacts are instead COPIED FORWARD into
+    this same `run_dir` from the most recent previous run (see
+    _copy_forward_skipped_stage) -- so a folder produced by steps=("linking",) still
+    looks like a complete run, with blocking/attributes artifacts included, just
+    carried over rather than freshly produced. If no previous run has those artifacts
+    to copy (first run ever for this block, or the previous run also skipped that
+    stage), this raises FileNotFoundError rather than silently leaving `run_dir`
+    incomplete -- a run "reusing" attributes/blocking results that don't actually
+    exist anywhere is a real bug to surface immediately, not a gap to paper over.
 
     The re-blocking feedback loop (see this module's docstring) only makes sense when
     "blocking" is actually a step that can run again in response to a diagnosed
@@ -163,25 +250,30 @@ def run_outer_loop(
         raise ValueError(f"steps must be a non-empty subset of {ALL_STEPS}")
     can_loop = "blocking" in steps_set and "linking" in steps_set
 
+    run_dir = run_dir or run_artifacts_dir(block_name, new_run_id())
+    for stage in ALL_STEPS:
+        if stage not in steps_set:
+            _copy_forward_skipped_stage(block_name, run_dir, stage)
+
     rounds: list[OuterRound] = []
     linking_feedback: str | None = None
 
     for round_idx in range(agent_loop_settings.max_outer_rounds):
         if "blocking" in steps_set:
             log.info("=== outer round %d for block '%s': blocking ===", round_idx, block_name)
-            run_blocking_agent(block_name, client=client, linking_feedback=linking_feedback)
+            run_blocking_agent(block_name, client=client, linking_feedback=linking_feedback, run_dir=run_dir)
         else:
             log.info("=== outer round %d for block '%s': skipping blocking (not in steps) ===", round_idx, block_name)
 
         if "attributes" in steps_set:
             log.info("=== outer round %d for block '%s': attributes ===", round_idx, block_name)
-            run_attribute_agent(block_name, client=client)
+            run_attribute_agent(block_name, client=client, run_dir=run_dir)
         else:
             log.info("=== outer round %d for block '%s': skipping attributes (not in steps) ===", round_idx, block_name)
 
         if "linking" in steps_set:
             log.info("=== outer round %d for block '%s': linking ===", round_idx, block_name)
-            linking_rounds = run_linking_agent(block_name, client=client)
+            linking_rounds = run_linking_agent(block_name, client=client, run_dir=run_dir)
         else:
             log.info("=== outer round %d for block '%s': skipping linking (not in steps) ===", round_idx, block_name)
             linking_rounds = []
@@ -199,7 +291,7 @@ def run_outer_loop(
             final_holdout_f1=best.holdout_evaluation.get("f1") if best else None,
         )
         rounds.append(outer_round)
-        _write_artifact(block_name, outer_round)
+        _write_artifact(run_dir, outer_round)
 
         if trigger is None:
             log.info(
@@ -241,8 +333,8 @@ def run_outer_loop(
     return rounds
 
 
-def _write_artifact(block_name: str, r: OuterRound) -> None:
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = ARTIFACTS_DIR / f"outer_loop_{block_name}_round{r.round}.json"
+def _write_artifact(run_dir: Path, r: OuterRound) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / f"outer_loop_round{r.round}.json"
     path.write_text(json.dumps(asdict(r), indent=2))
     log.info("Wrote %s", path)
