@@ -36,6 +36,45 @@ _NORMALIZE_SQL = """
     nullif(ltrim(regexp_replace({col}, '[^0-9]', '', 'g'), '0'), '')
 """
 
+# Word-level Jaccard similarity between the two sides' text -- a cheap, dependency-free
+# sanity check that a UPC/GTIN match is ALSO a plausible text match, not just a shared
+# barcode (which could reflect barcode reuse, a mislabeled listing, or a plain data-entry
+# error on either side -- nothing about the UPC join alone rules that out). DuckDB-native
+# (regexp_extract_all, same tokenization pattern as profiling.py) rather than adding a
+# fuzzy-matching dependency for what's fundamentally bag-of-words overlap at this scale
+# (~1.8M pairs) -- fast enough to run as one vectorized query, not per-row Python.
+#
+# DELIBERATELY NOT used to auto-filter gold_pairs/gold_train/gold_holdout -- verified
+# against a random sample of the real zero-similarity tail (40,741 of 1,777,551 pairs,
+# 2.3%, at build time on this project's actual data) that a blind low-similarity cutoff
+# would be WRONG far too often to be safe:
+#   - cross-language listings for the same real product ('DARE, BRETON, WHITE BEAN
+#     CRACKERS WITH SALT & PEPPER' <-> 'Craquelin haricots blancs avec sel et poivre',
+#     zero English/French token overlap, same product)
+#   - a real brand name that shares no words with the generic description ('ZESTY RANCH
+#     CRUNCHY BROAD BEANS' <-> 'bada bean bada boom')
+#   - Branded's own description sometimes just names the PACKAGING, not the product
+#     ('Aluminum Cans' <-> 'Seltzer Cranberry Lime') -- a real match, Branded's data is
+#     just uninformative here, not wrong
+#   - tokenization edge cases (concatenated brand names: 'BAHAMA MAMA ENERGY DRINK' <->
+#     'GFUEL BahamaMama' reads as zero overlap only because "BahamaMama" is one token)
+# Genuinely wrong-looking pairs exist in the same tail too (e.g. a long real branded
+# description paired with OFF product_name "yea"), but a score this noisy can't reliably
+# tell the two apart on its own -- surfaced as a visible column + a dedicated low-
+# similarity review export (see export_low_similarity_examples) for a human to judge,
+# the same SME-review pattern this project already uses elsewhere, rather than a silent
+# automated cut that would measurably discard real matches.
+def _description_similarity_sql(text_a: str, text_b: str) -> str:
+    """Word-level Jaccard similarity between two text expressions -- a single vectorized
+    expression (no correlated subquery/row-by-row evaluation), so it stays fast at this
+    table's ~1.8M-row scale."""
+    t1 = f"list_distinct(regexp_extract_all(lower(coalesce({text_a}, '')), '[a-z]+'))"
+    t2 = f"list_distinct(regexp_extract_all(lower(coalesce({text_b}, '')), '[a-z]+'))"
+    return (
+        f"CASE WHEN len(list_distinct(list_concat({t1}, {t2}))) = 0 THEN 0.0 "
+        f"ELSE len(list_intersect({t1}, {t2}))::DOUBLE / len(list_distinct(list_concat({t1}, {t2}))) END"
+    )
+
 
 def normalize_code(raw: str | None) -> str | None:
     """Normalize a UPC/EAN/GTIN string to a comparable digit-only, zero-stripped core.
@@ -101,7 +140,8 @@ def build_gold_pairs(con: duckdb.DuckDBPyConnection) -> None:
             o.brands AS catalog_brands,
             o.catalog_ingredients_text,
             o.quantity AS catalog_quantity,
-            b.norm_upc
+            b.norm_upc,
+            {_description_similarity_sql("b.description", "o.catalog_product_name")} AS description_similarity
         FROM branded_norm b
         JOIN catalog_norm o ON o.norm_upc = b.norm_upc
         WHERE b.norm_upc IS NOT NULL
@@ -114,6 +154,27 @@ def build_gold_pairs(con: duckdb.DuckDBPyConnection) -> None:
         "(%d distinct GTINs; Branded Foods re-publishes many rows per GTIN)",
         n,
         n_distinct_upc,
+    )
+    sim = con.execute(
+        """
+        SELECT
+            round(avg(description_similarity), 4),
+            round(median(description_similarity), 4),
+            round(quantile_cont(description_similarity, 0.1), 4),
+            sum(CASE WHEN description_similarity = 0 THEN 1 ELSE 0 END),
+            sum(CASE WHEN catalog_product_name IS NULL THEN 1 ELSE 0 END)
+        FROM gold_pairs
+        """
+    ).fetchone()
+    log.info(
+        "gold_pairs description_similarity (word-Jaccard, UPC-matched pairs' text -- "
+        "NOT auto-filtered on, see _DESCRIPTION_SIMILARITY_SQL's docstring for why): "
+        "mean=%.4f median=%.4f p10=%.4f, %d/%d pairs (%.1f%%) at zero overlap, "
+        "%d with no OFF product_name text at all",
+        *sim[:4],
+        n,
+        (sim[3] / n * 100) if n else 0.0,
+        sim[4],
     )
 
 
@@ -181,6 +242,34 @@ def train_holdout_split(con: duckdb.DuckDBPyConnection, holdout_frac: float = 0.
     log.info("gold_train: %d, gold_holdout: %d", n_train, n_holdout)
 
 
+def export_low_similarity_examples(con: duckdb.DuckDBPyConnection, n: int = 200) -> None:
+    """Writes the `n` lowest-`description_similarity` real gold pairs to
+    `low_similarity_examples.csv`, for a human to spot-check -- NOT an automated filter
+    (see _DESCRIPTION_SIMILARITY_SQL's docstring for why a blind cutoff would discard
+    real matches too often to be safe). This is the same SME-review pattern
+    `sme_spot_check_sample.csv` already uses elsewhere, just prioritized toward the
+    pairs a similarity score flags as worth a second look, rather than a random spread.
+    Excludes pairs with no OFF product_name text at all (missing text, not a text
+    MISMATCH -- a different, already-visible problem via description_similarity=0.0's
+    own count in build_gold_pairs' log line, not something a human review of the text
+    can usefully judge)."""
+    path = str(CALIBRATION_DIR / "low_similarity_examples.csv").replace("'", "''")
+    con.execute(
+        f"""
+        COPY (
+            SELECT fdc_id, catalog_code, branded_food_category, brand_name,
+                   fndds_style_description AS branded_description, catalog_product_name,
+                   description_similarity, gtin_upc
+            FROM gold_pairs
+            WHERE catalog_product_name IS NOT NULL
+            ORDER BY description_similarity ASC, fdc_id
+            LIMIT {n}
+        ) TO '{path}' (FORMAT CSV, HEADER)
+        """
+    )
+    log.info("Wrote %d lowest-description_similarity pairs to %s for SME review", n, path)
+
+
 def export_artifacts(con: duckdb.DuckDBPyConnection) -> None:
     CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
     for table, fname in [
@@ -196,12 +285,13 @@ def export_artifacts(con: duckdb.DuckDBPyConnection) -> None:
         COPY (
             SELECT fdc_id, catalog_code, branded_food_category, brand_name,
                    fndds_style_description AS branded_description, catalog_product_name,
-                   gtin_upc, catalog_code AS catalog_upc_raw
+                   description_similarity, gtin_upc, catalog_code AS catalog_upc_raw
             FROM calibration_sample
             ORDER BY branded_food_category, fdc_id
         ) TO '{sme_csv}' (FORMAT CSV, HEADER)
         """
     )
+    export_low_similarity_examples(con)
     log.info("Exported calibration artifacts to %s", CALIBRATION_DIR)
 
 
