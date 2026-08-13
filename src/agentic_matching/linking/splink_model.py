@@ -24,8 +24,8 @@ log = logging.getLogger(__name__)
 
 def load_block_frames(block_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     fndds_path = BLOCKS_DIR / f"{block_name}_fndds.parquet"
-    off_path = BLOCKS_DIR / f"{block_name}_off.parquet"
-    return pd.read_parquet(fndds_path), pd.read_parquet(off_path)
+    catalog_path = BLOCKS_DIR / f"{block_name}_catalog.parquet"
+    return pd.read_parquet(fndds_path), pd.read_parquet(catalog_path)
 
 
 def stringify(v: Any) -> Any:
@@ -35,15 +35,15 @@ def stringify(v: Any) -> Any:
 
 
 def _drop_unobservable_attrs(
-    attrs: list[dict[str, Any]], fndds_vals: dict[str, list[Any]], off_vals: dict[str, list[Any]]
+    attrs: list[dict[str, Any]], fndds_vals: dict[str, list[Any]], catalog_vals: dict[str, list[Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, list[Any]], dict[str, list[Any]]]:
     """Drop any attribute whose computed value is None for *every* record on one side.
 
     Only a categorical attribute can produce this (rules.apply_attribute always
     resolves a boolean attribute to True/False, never None) -- it happens when the LLM
-    (or a hand-authored seed) gives every category real off_keywords but leaves every
+    (or a hand-authored seed) gives every category real catalog_keywords but leaves every
     category's fndds_keywords empty (or vice versa), e.g. verified against this
-    project's "breaded_vegetables" block: has_breaded_vegetable_tag had off_keywords
+    project's "breaded_vegetables" block: has_breaded_vegetable_tag had catalog_keywords
     like "en:breaded-products" but fndds_keywords: [] on both categories, so every FNDDS
     record's value was None -- unconditionally, since apply_attribute never assigns a
     category name from an empty keyword list. A column that's 100% null on one side can
@@ -57,12 +57,12 @@ def _drop_unobservable_attrs(
     """
     kept: list[dict[str, Any]] = []
     kept_fndds_vals: dict[str, list[Any]] = {}
-    kept_off_vals: dict[str, list[Any]] = {}
+    kept_catalog_vals: dict[str, list[Any]] = {}
     for attr in attrs:
         name = attr["name"]
         fndds_all_null = all(v is None for v in fndds_vals[name])
-        off_all_null = all(v is None for v in off_vals[name])
-        if fndds_all_null or off_all_null:
+        catalog_all_null = all(v is None for v in catalog_vals[name])
+        if fndds_all_null or catalog_all_null:
             log.warning(
                 "Dropping matching attribute '%s': entirely null on the %s side (no "
                 "category's %s_keywords ever matched a record there), so it can never "
@@ -70,25 +70,25 @@ def _drop_unobservable_attrs(
                 "splink's EM training for it. Fix the attribute's %s_keywords, or drop "
                 "it, in the generated attribute set if this recurs.",
                 name,
-                "fndds" if fndds_all_null else "off",
-                "fndds" if fndds_all_null else "off",
-                "fndds" if fndds_all_null else "off",
+                "fndds" if fndds_all_null else "catalog",
+                "fndds" if fndds_all_null else "catalog",
+                "fndds" if fndds_all_null else "catalog",
             )
             continue
         kept.append(attr)
         kept_fndds_vals[name] = fndds_vals[name]
-        kept_off_vals[name] = off_vals[name]
-    return kept, kept_fndds_vals, kept_off_vals
+        kept_catalog_vals[name] = catalog_vals[name]
+    return kept, kept_fndds_vals, kept_catalog_vals
 
 
 def prepare_frames(
     block_name: str, attrs: list[dict[str, Any]]
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, Any]]]:
-    fndds_raw, off_raw = load_block_frames(block_name)
+    fndds_raw, catalog_raw = load_block_frames(block_name)
 
     fndds_vals = compute_attribute_values(attrs, fndds_raw["fndds_search_text"].tolist(), side="fndds")
-    off_vals = compute_attribute_values(attrs, off_raw["search_text"].tolist(), side="off")
-    attrs, fndds_vals, off_vals = _drop_unobservable_attrs(attrs, fndds_vals, off_vals)
+    catalog_vals = compute_attribute_values(attrs, catalog_raw["search_text"].tolist(), side="catalog")
+    attrs, fndds_vals, catalog_vals = _drop_unobservable_attrs(attrs, fndds_vals, catalog_vals)
 
     fndds_df = pd.DataFrame(
         {
@@ -98,15 +98,15 @@ def prepare_frames(
             **{name: [stringify(v) for v in vals] for name, vals in fndds_vals.items()},
         }
     )
-    off_df = pd.DataFrame(
+    catalog_df = pd.DataFrame(
         {
-            "unique_id": off_raw["code"].astype(str),
-            "description": off_raw["product_name"],
-            "search_text": off_raw["search_text"],
-            **{name: [stringify(v) for v in vals] for name, vals in off_vals.items()},
+            "unique_id": catalog_raw["code"].astype(str),
+            "description": catalog_raw["product_name"],
+            "search_text": catalog_raw["search_text"],
+            **{name: [stringify(v) for v in vals] for name, vals in catalog_vals.items()},
         }
     )
-    return fndds_df, off_df, attrs
+    return fndds_df, catalog_df, attrs
 
 
 def build_comparisons(attrs: list[dict[str, Any]]) -> list[Any]:
@@ -169,12 +169,12 @@ def build_blocking_rules(attrs: list[dict[str, Any]]) -> list[Any]:
 def build_linker(
     block_name: str, attrs: list[dict[str, Any]], retain_intermediate_calculation_columns: bool = False
 ) -> tuple[Linker, pd.DataFrame, pd.DataFrame, list[dict[str, Any]]]:
-    """Returns (linker, fndds_df, off_df, attrs) -- `attrs` is echoed back because
+    """Returns (linker, fndds_df, catalog_df, attrs) -- `attrs` is echoed back because
     prepare_frames may drop attributes that turned out to be unobservable on one side
     (see `_drop_unobservable_attrs`); callers must train() with THIS returned list, not
     the one they passed in, or splink_model.train()'s EM blocking will reference a
     comparison column that was never added to the settings/dataframes."""
-    fndds_df, off_df, attrs = prepare_frames(block_name, attrs)
+    fndds_df, catalog_df, attrs = prepare_frames(block_name, attrs)
     settings = SettingsCreator(
         link_type="link_only",
         comparisons=build_comparisons(attrs),
@@ -198,12 +198,12 @@ def build_linker(
         retain_intermediate_calculation_columns=retain_intermediate_calculation_columns,
     )
     linker = Linker(
-        [fndds_df, off_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"]
+        [fndds_df, catalog_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "catalog"]
     )
-    return linker, fndds_df, off_df, attrs
+    return linker, fndds_df, catalog_df, attrs
 
 
-def linker_from_settings(fndds_df: pd.DataFrame, off_df: pd.DataFrame, settings: dict[str, Any]) -> Linker:
+def linker_from_settings(fndds_df: pd.DataFrame, catalog_df: pd.DataFrame, settings: dict[str, Any]) -> Linker:
     """Build a Linker directly from an already-fully-specified settings dict (e.g. a
     trained model's exported settings, possibly adjusted -- see linking/
     nutrition_priors.py::apply_nutrition_priors) rather than from an attrs list +
@@ -211,7 +211,7 @@ def linker_from_settings(fndds_df: pd.DataFrame, off_df: pd.DataFrame, settings:
     responsible for the settings already reflecting whatever trained/adjusted state
     it should. Same construction `evaluate.py::_build_holdout_predictions` already
     uses for the identical reason (scoring against a settings dict, not retraining)."""
-    return Linker([fndds_df, off_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"])
+    return Linker([fndds_df, catalog_df], settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "catalog"])
 
 
 def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
@@ -263,5 +263,44 @@ def train(linker: Linker, attrs: list[dict[str, Any]]) -> None:
         linker.training.estimate_parameters_using_expectation_maximisation(rule)
 
 
+def normalize_prediction_sides(df: pd.DataFrame) -> pd.DataFrame:
+    """Splink assigns a link_only prediction's `_l`/`_r` suffix by sorting the two
+    tables' `source_dataset` values ALPHABETICALLY, not by the order they were passed
+    to `Linker(...)` -- every consumer in this codebase (splink_model, evaluate.py,
+    agent_loop.py, charts.py) assumes `_l` is always the fndds side and `_r` is always
+    the catalog side (matching `Linker([fndds_df, catalog_df], ...,
+    input_table_aliases=["fndds", "catalog"])`'s own argument order), which happened to
+    already match splink's alphabetical assignment back when the catalog side was named
+    "off" ("fndds" < "off"). Renaming it to "catalog" ("catalog" < "fndds") silently
+    REVERSED which physical side splink calls `_l` vs `_r`, while every consumer kept
+    assuming the old fixed mapping -- verified real, serious regression: production's
+    own `final_matches.csv` had its `fndds_id`/`catalog_code` columns populated with
+    each other's values (barcode-shaped ids under `fndds_id`, short FDC-id-shaped
+    values under `catalog_code`), and every holdout-eval score silently read as 0.0
+    because `catalog_to_true_fndds`'s real catalog-code keys never matched a
+    predicted dict built assuming `unique_id_r` was the catalog side.
+
+    Called immediately after every `predict().as_pandas_dataframe()` in this codebase,
+    so it's the ONE place that has to know splink's actual (alphabetical, table-name
+    dependent) assignment -- everywhere else keeps safely assuming `_l`=fndds,
+    `_r`=catalog, regardless of what future side-naming or table order changes."""
+    if "source_dataset_l" not in df.columns:
+        return df  # single-table / already-normalized frame -- nothing to check
+    if df.empty or (df["source_dataset_l"] == "fndds").all():
+        return df
+    if not (df["source_dataset_l"] == "catalog").all():
+        raise ValueError(
+            f"normalize_prediction_sides: expected source_dataset_l to be uniformly "
+            f"'fndds' or 'catalog', got {sorted(df['source_dataset_l'].unique())} -- "
+            "mixed/unexpected values, refusing to guess which rows to swap."
+        )
+    l_cols = [c for c in df.columns if c.endswith("_l")]
+    r_cols = [c[: -len("_l")] + "_r" for c in l_cols]
+    swapped = df.copy()
+    swapped[l_cols], swapped[r_cols] = df[r_cols].to_numpy(), df[l_cols].to_numpy()
+    return swapped
+
+
 def predict(linker: Linker, threshold: float = 0.5) -> pd.DataFrame:
-    return linker.inference.predict(threshold_match_probability=threshold).as_pandas_dataframe()
+    df = linker.inference.predict(threshold_match_probability=threshold).as_pandas_dataframe()
+    return normalize_prediction_sides(df)

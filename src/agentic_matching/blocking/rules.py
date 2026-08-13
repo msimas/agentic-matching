@@ -28,6 +28,8 @@ constraints" section for the concrete verified numbers this was checked against.
 
 from __future__ import annotations
 
+from agentic_matching.catalog_source import ACTIVE_CATALOG_SOURCE
+
 from typing import Any, Literal
 
 # Plain function/connector words -- these can never legitimately define ANY block on
@@ -122,11 +124,12 @@ def fndds_predicate_sql(
     return _side_predicate_sql(rule.get("fndds", {}), text_col, category_col=category_col, category_kind="exact")
 
 
-def off_predicate_sql(
+def catalog_predicate_sql(
     rule: dict[str, Any],
-    text_col: str = "search_text",
-    category_col: str | None = "categories_tags",
+    text_col: str = ACTIVE_CATALOG_SOURCE.search_text_col,
+    category_col: str | None = ACTIVE_CATALOG_SOURCE.category_col,
+    category_kind: Literal["exact", "array_contains"] = ACTIVE_CATALOG_SOURCE.category_kind,
 ) -> str:
     return _side_predicate_sql(
-        rule.get("off", {}), text_col, category_col=category_col, category_kind="array_contains"
+        rule.get("catalog", {}), text_col, category_col=category_col, category_kind=category_kind
     )

@@ -44,15 +44,15 @@ BOOLEAN_ATTR = {
     "kind": "boolean",
     "description": "contains meat",
     "fndds_keywords": ["pork", "bacon", "ham"],
-    "off_keywords": ["pork", "bacon", "ham"],
+    "catalog_keywords": ["pork", "bacon", "ham"],
 }
 CATEGORICAL_ATTR = {
     "name": "beans_bean_type",
     "kind": "categorical",
     "description": "bean type",
     "categories": {
-        "kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]},
-        "pinto": {"fndds_keywords": ["pinto"], "off_keywords": ["pinto"]},
+        "kidney": {"fndds_keywords": ["kidney"], "catalog_keywords": ["kidney"]},
+        "pinto": {"fndds_keywords": ["pinto"], "catalog_keywords": ["pinto"]},
     },
 }
 

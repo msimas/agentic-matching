@@ -3,9 +3,9 @@ both the FNDDS side and the OFF side -- the attribute-stage counterpart to
 blocking/rules.py's blocking-rule predicates.
 
 An attribute definition (as produced by llm/prompts.py's attribute schema) is either:
-  - boolean:      {"kind": "boolean", "fndds_keywords": [...], "off_keywords": [...]}
+  - boolean:      {"kind": "boolean", "fndds_keywords": [...], "catalog_keywords": [...]}
   - categorical:  {"kind": "categorical", "categories": {cat_name: {"fndds_keywords":
-                   [...], "off_keywords": [...]}, ...}}
+                   [...], "catalog_keywords": [...]}, ...}}
 
 This module is the single place that turns a definition + a side's raw text into a
 value, so attributes/metrics.py's correlation check and linking/splink_model.py's
@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 log = logging.getLogger(__name__)
 
-Side = Literal["fndds", "off"]
+Side = Literal["fndds", "catalog"]
 
 
 def validate_attribute(attr: dict[str, Any]) -> str | None:
@@ -33,7 +33,7 @@ def validate_attribute(attr: dict[str, Any]) -> str | None:
     whenever `kws` is empty, so the attribute is `False` for every record on that side
     regardless of what the text actually says -- verified real case: an LLM revision
     for this project's "beans" block returned `contains_meat` with its
-    "description" field updated but `fndds_keywords`/`off_keywords` entirely absent
+    "description" field updated but `fndds_keywords`/`catalog_keywords` entirely absent
     from the response, silently turning a real (if incomplete) attribute into one that
     could never be True again. This is checked on the DEFINITION itself, not computed
     values, so it catches the problem immediately after the LLM response is parsed --
@@ -49,14 +49,14 @@ def validate_attribute(attr: dict[str, Any]) -> str | None:
     name = attr.get("name", "<unnamed>")
     kind = attr.get("kind")
     if kind == "boolean":
-        for side in ("fndds", "off"):
+        for side in ("fndds", "catalog"):
             if not attr.get(f"{side}_keywords"):
                 return f"{name!r}: boolean attribute has no {side}_keywords (would always evaluate False on {side})"
     elif kind == "categorical":
         categories = attr.get("categories") or {}
         if len(categories) < 2:
             return f"{name!r}: categorical attribute has fewer than 2 categories"
-        for side in ("fndds", "off"):
+        for side in ("fndds", "catalog"):
             if not any(cat_def.get(f"{side}_keywords") for cat_def in categories.values()):
                 return f"{name!r}: no category has any {side}_keywords (would always evaluate null on {side})"
     return None
@@ -90,7 +90,7 @@ def apply_attribute(attr: dict[str, Any], text: str | None, side: Side) -> Any:
             kws = cat_def.get(key, [])
             if kws and any(kw.lower() in text_l for kw in kws if kw):
                 return cat_name
-            if not cat_def.get("fndds_keywords") and not cat_def.get("off_keywords"):
+            if not cat_def.get("fndds_keywords") and not cat_def.get("catalog_keywords"):
                 fallback_category = cat_name
         return fallback_category
     raise ValueError(f"Unknown attribute kind: {attr['kind']!r}")

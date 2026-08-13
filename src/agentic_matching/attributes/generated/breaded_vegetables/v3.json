@@ -9,9 +9,10 @@
           "onion",
           "rings"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "onion",
-          "rings"
+          "rings",
+          "bhajis"
         ]
       },
       "potato": {
@@ -21,94 +22,99 @@
           "tots",
           "fries"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "potato",
           "sweet",
-          "fries",
-          "tots"
+          "tots",
+          "fries"
         ]
       },
       "mushroom": {
         "fndds_keywords": [
           "mushroom"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "mushroom"
-        ]
-      },
-      "okra": {
-        "fndds_keywords": [
-          "okra"
-        ],
-        "off_keywords": [
-          "okra"
         ]
       },
       "cauliflower": {
         "fndds_keywords": [
           "cauliflower"
         ],
-        "off_keywords": [
-          "cauliflower"
-        ]
+        "catalog_keywords": []
       },
       "eggplant": {
         "fndds_keywords": [
           "eggplant"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "eggplant"
         ]
       },
       "green_tomato": {
         "fndds_keywords": [
-          "green tomato",
-          "green"
+          "tomato",
+          "green tomato"
         ],
-        "off_keywords": [
-          "green tomato",
-          "green"
+        "catalog_keywords": [
+          "tomato"
         ]
       },
-      "squash": {
+      "okra": {
         "fndds_keywords": [
-          "squash",
-          "summer squash"
+          "okra"
         ],
-        "off_keywords": [
-          "squash"
+        "catalog_keywords": [
+          "okra"
         ]
       },
       "yuca": {
         "fndds_keywords": [
           "yuca"
         ],
-        "off_keywords": []
+        "catalog_keywords": []
+      },
+      "green_bean": {
+        "fndds_keywords": [
+          "green beans"
+        ],
+        "catalog_keywords": []
+      },
+      "broccoli": {
+        "fndds_keywords": [
+          "broccoli"
+        ],
+        "catalog_keywords": []
+      },
+      "squash": {
+        "fndds_keywords": [
+          "squash"
+        ],
+        "catalog_keywords": []
       }
     }
   },
   {
     "name": "breaded_vegetables_is_tempura",
     "kind": "boolean",
-    "description": "Indicates if the vegetable is prepared as tempura.",
+    "description": "Is the vegetable prepared as tempura?",
     "fndds_keywords": [
       "tempura"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "tempura"
     ]
   },
   {
     "name": "breaded_vegetables_is_pakora",
     "kind": "boolean",
-    "description": "Indicates if the vegetable is prepared as pakora.",
+    "description": "Is the vegetable prepared as pakora?",
     "fndds_keywords": [
       "pakora"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "pakora",
-      "bhajis",
-      "samosas"
+      "bhajis"
     ]
   }
 ]

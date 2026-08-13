@@ -141,7 +141,7 @@ def classify_nutrition_significance(attr: dict[str, Any]) -> str | None:
     -- see _GROUPS for the term sets and why dietary_classification is checked first.
 
     Checked against the attribute's own `name` + `description` only -- not its
-    fndds_keywords/off_keywords (or, for a categorical attribute, each category's
+    fndds_keywords/catalog_keywords (or, for a categorical attribute, each category's
     keyword lists). Name/description is what the attribute is semantically DECLARED
     to represent (and what an SME reviewing artifacts actually reads), so this is
     precise and auditable; scanning keyword lists too would catch more real cases

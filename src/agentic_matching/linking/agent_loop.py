@@ -10,7 +10,7 @@ run_artifacts_dir/new_run_id.
 <run_dir>/final_matches.csv (no round number -- overwritten each round, so it always
 reflects THIS run's latest state, same pattern attributes/generated/<block>/latest.json
 uses across runs) is the actual deliverable: one best FNDDS record per
-OFF/commercial-product record (see evaluate.best_match_per_off), not every candidate
+OFF/commercial-product record (see evaluate.best_match_per_catalog), not every candidate
 pair.
 """
 
@@ -43,7 +43,7 @@ from agentic_matching.linking.degeneracy_check import (
 )
 from agentic_matching.linking.evaluate import (
     attribute_discriminative_power,
-    best_match_per_off,
+    best_match_per_catalog,
     export_predictions_csv,
     holdout_error_examples,
     plausibility_report,
@@ -194,7 +194,7 @@ def _train_and_evaluate_round(
     # reassign `attrs` to what it actually returns so every downstream use this round
     # (train, holdout scoring, CSV export, the artifact, next round's LLM prompt) stays
     # consistent with what the trained linker's settings actually contain.
-    linker, fndds_df, off_df, attrs = splink_model.build_linker(block_name, attrs)
+    linker, fndds_df, catalog_df, attrs = splink_model.build_linker(block_name, attrs)
     # Concise, always-INFO summary of what this round is actually training with --
     # distinct from the full prompt/response dump at DEBUG (see llm/client.py) and from
     # _write_artifact's full-fidelity JSON below: this is the one line to scan when
@@ -228,7 +228,7 @@ def _train_and_evaluate_round(
     # check reflects the actual, adjusted weights, not EM's untouched estimate.
     trained_settings = apply_nutrition_priors(raw_trained_settings, attrs, discriminative_power)
     if trained_settings != raw_trained_settings:
-        linker = splink_model.linker_from_settings(fndds_df, off_df, trained_settings)
+        linker = splink_model.linker_from_settings(fndds_df, catalog_df, trained_settings)
 
     degeneracy_flags = check_degeneracy(trained_settings)
 
@@ -264,7 +264,7 @@ def _train_and_evaluate_round(
     # per OFF/commercial-product record, not every candidate. No round number --
     # always reflects this (latest) round, so a downstream consumer always reads
     # the current best output without needing to know which round number "won".
-    final_matches = best_match_per_off(all_predictions)
+    final_matches = best_match_per_catalog(all_predictions)
     final_matches_csv_path = run_dir / "final_matches.csv"
     n_final_written = export_predictions_csv(final_matches, attrs, final_matches_csv_path, top_n=None)
     log.info(
@@ -288,7 +288,7 @@ def _train_and_evaluate_round(
         matches_csv=str(matches_csv_path),
         final_matches_csv=str(final_matches_csv_path),
     )
-    return round_obj, attrs, fndds_df, off_df
+    return round_obj, attrs, fndds_df, catalog_df
 
 
 def run_linking_agent(
@@ -311,10 +311,10 @@ def run_linking_agent(
     # columns, not the raw category/brand fields _field_stats needs. Same functions,
     # same block-scoped data, the standalone attribute agent loop already uses -- see
     # attributes/agent_loop.py::run_attribute_agent for the identical pattern.
-    raw_fndds_df, raw_off_df = _load_block(block_name)
-    sample_pairs = _sample_pairs(raw_fndds_df, raw_off_df)
-    field_stats = _field_stats(raw_fndds_df, raw_off_df)
-    candidate_terms = _candidate_boolean_terms(raw_fndds_df, raw_off_df, block_name)
+    raw_fndds_df, raw_catalog_df = _load_block(block_name)
+    sample_pairs = _sample_pairs(raw_fndds_df, raw_catalog_df)
+    field_stats = _field_stats(raw_fndds_df, raw_catalog_df)
+    candidate_terms = _candidate_boolean_terms(raw_fndds_df, raw_catalog_df, block_name)
 
     rounds: list[LinkingRound] = []
     prev_f1: float | None = None
@@ -356,7 +356,7 @@ def run_linking_agent(
 
     for round_idx in range(agent_loop_settings.max_rounds):
         try:
-            round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
+            round_result, attrs, fndds_df, catalog_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
             # Proactively drop any attribute whose OWN comparison is degenerate
             # (collapsed/label_switching/untrained -- see degenerate_attribute_columns's
             # docstring for why all three mean "no usable signal" for an attribute
@@ -410,7 +410,7 @@ def run_linking_agent(
                 dropped_definitions.update({a["name"]: a for a in attrs if a["name"] in degenerate})
                 dropped_this_round.extend(degenerate)
                 attrs = [a for a in attrs if a["name"] not in degenerate]
-                round_result, attrs, fndds_df, off_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
+                round_result, attrs, fndds_df, catalog_df = _train_and_evaluate_round(block_name, round_idx, attrs, run_dir)
         except Exception:
             # Training itself can fail, not just the LLM revision call below (see
             # splink_model.build_comparisons' docstring for the verified real case:
@@ -487,7 +487,7 @@ def run_linking_agent(
         # degeneracy_flags deliberately excluded from what's shown here: a degenerate
         # attribute-column flag is now auto-remediated above (proactive drop, before
         # this point) rather than something the LLM needs to review/act on itself.
-        values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), off_df)
+        values_df = _pooled_values(attrs, fndds_df.rename(columns={"search_text": "fndds_search_text"}), catalog_df)
         correlation_flags = check_correlations(values_df)
         evaluation: dict[str, Any] = {**holdout_eval, "attribute_discriminative_power": discriminative_power}
         # best_round_so_far -- reuses select_best_round (the same (not collapsed, no
@@ -543,7 +543,7 @@ def run_linking_agent(
                 {
                     "name": name,
                     "definition": {
-                        k: v for k, v in attempted_definitions.get(name, {}).items() if k in ("fndds_keywords", "off_keywords", "categories")
+                        k: v for k, v in attempted_definitions.get(name, {}).items() if k in ("fndds_keywords", "catalog_keywords", "categories")
                     },
                     "dropped_reason": drop_reasons[name],
                 }
@@ -578,7 +578,7 @@ def run_linking_agent(
                 candidate_terms=candidate_terms,
                 guidance=guidance,
                 fndds_texts=raw_fndds_df["description"].tolist(),
-                off_texts=raw_off_df["search_text"].tolist(),
+                catalog_texts=raw_catalog_df["search_text"].tolist(),
                 temperature=temperature,
                 concept_history=concept_history or None,
             )
@@ -668,10 +668,10 @@ def run_linking_agent(
             best.holdout_evaluation.get("f1"),
             best.round,
         )
-        linker, _fndds_df, _off_df, _attrs = splink_model.build_linker(block_name, best.attributes)
+        linker, _fndds_df, _catalog_df, _attrs = splink_model.build_linker(block_name, best.attributes)
         splink_model.train(linker, best.attributes)
         best_predictions = splink_model.predict(linker, threshold=0.0)
-        final_matches = best_match_per_off(best_predictions)
+        final_matches = best_match_per_catalog(best_predictions)
         final_matches_csv_path = run_dir / "final_matches.csv"
         n_final_written = export_predictions_csv(final_matches, best.attributes, final_matches_csv_path, top_n=None)
         log.info(

@@ -47,11 +47,11 @@ def normalize_code(raw: str | None) -> str | None:
     return stripped or None
 
 
-def _attach_off(con: duckdb.DuckDBPyConnection) -> None:
-    off_path = str(OFF_PARQUET).replace("'", "''")
+def _attach_catalog(con: duckdb.DuckDBPyConnection) -> None:
+    catalog_path = str(OFF_PARQUET).replace("'", "''")
     con.execute(
         f"""
-        CREATE OR REPLACE VIEW off_raw AS
+        CREATE OR REPLACE VIEW catalog_raw AS
         SELECT
             code,
             product_name,
@@ -59,7 +59,7 @@ def _attach_off(con: duckdb.DuckDBPyConnection) -> None:
             brands,
             ingredients_text,
             quantity
-        FROM read_parquet('{off_path}')
+        FROM read_parquet('{catalog_path}')
         """
     )
 
@@ -75,17 +75,17 @@ def build_gold_pairs(con: duckdb.DuckDBPyConnection) -> None:
             SELECT bf.*, {norm_gtin} AS norm_upc
             FROM v_branded bf
         ),
-        off_norm AS (
+        catalog_norm AS (
             SELECT
                 off.code,
                 -- product_name is STRUCT(lang, text)[]; take the first entry's text.
-                (list_transform(off.product_name, x -> x.text))[1] AS off_product_name,
+                (list_transform(off.product_name, x -> x.text))[1] AS catalog_product_name,
                 off.categories_tags,
                 off.brands,
-                (list_transform(off.ingredients_text, x -> x.text))[1] AS off_ingredients_text,
+                (list_transform(off.ingredients_text, x -> x.text))[1] AS catalog_ingredients_text,
                 off.quantity,
                 {norm_code} AS norm_upc
-            FROM off_raw off
+            FROM catalog_raw off
         )
         SELECT
             b.fdc_id,
@@ -95,15 +95,15 @@ def build_gold_pairs(con: duckdb.DuckDBPyConnection) -> None:
             b.branded_food_category,
             b.ingredients AS branded_ingredients,
             b.gtin_upc,
-            o.code AS off_code,
-            o.off_product_name,
-            o.categories_tags AS off_categories_tags,
-            o.brands AS off_brands,
-            o.off_ingredients_text,
-            o.quantity AS off_quantity,
+            o.code AS catalog_code,
+            o.catalog_product_name,
+            o.categories_tags AS catalog_categories_tags,
+            o.brands AS catalog_brands,
+            o.catalog_ingredients_text,
+            o.quantity AS catalog_quantity,
             b.norm_upc
         FROM branded_norm b
-        JOIN off_norm o ON o.norm_upc = b.norm_upc
+        JOIN catalog_norm o ON o.norm_upc = b.norm_upc
         WHERE b.norm_upc IS NOT NULL
         """
     )
@@ -129,7 +129,7 @@ def stratified_sample(
             SELECT *,
                 row_number() OVER (
                     PARTITION BY branded_food_category
-                    ORDER BY hash(fdc_id || off_code || {seed}::VARCHAR)
+                    ORDER BY hash(fdc_id || catalog_code || {seed}::VARCHAR)
                 ) AS rn
             FROM gold_pairs
         )
@@ -156,7 +156,7 @@ def train_holdout_split(con: duckdb.DuckDBPyConnection, holdout_frac: float = 0.
 
     Branded Foods re-publishes the same physical product many times under the same
     GTIN (this dataset has ~2.0M rows but only ~465K distinct GTINs, up to 38x
-    duplication for a single barcode) — splitting by individual (fdc_id, off_code) pair
+    duplication for a single barcode) — splitting by individual (fdc_id, catalog_code) pair
     would let near-duplicate rows for the same GTIN leak across train and holdout. We
     split by norm_upc (the GTIN group) instead, so every row for a given barcode lands
     on the same side.
@@ -172,7 +172,7 @@ def train_holdout_split(con: duckdb.DuckDBPyConnection, holdout_frac: float = 0.
         """
         CREATE OR REPLACE TABLE gold_train AS
         SELECT g.* FROM gold_pairs g
-        LEFT JOIN gold_holdout h ON h.fdc_id = g.fdc_id AND h.off_code = g.off_code
+        LEFT JOIN gold_holdout h ON h.fdc_id = g.fdc_id AND h.catalog_code = g.catalog_code
         WHERE h.fdc_id IS NULL
         """
     )
@@ -194,9 +194,9 @@ def export_artifacts(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(
         f"""
         COPY (
-            SELECT fdc_id, off_code, branded_food_category, brand_name,
-                   fndds_style_description AS branded_description, off_product_name,
-                   gtin_upc, off_code AS off_upc_raw
+            SELECT fdc_id, catalog_code, branded_food_category, brand_name,
+                   fndds_style_description AS branded_description, catalog_product_name,
+                   gtin_upc, catalog_code AS catalog_upc_raw
             FROM calibration_sample
             ORDER BY branded_food_category, fdc_id
         ) TO '{sme_csv}' (FORMAT CSV, HEADER)
@@ -208,7 +208,7 @@ def export_artifacts(con: duckdb.DuckDBPyConnection) -> None:
 def build(holdout_frac: float = 0.3, n_per_stratum: int = 25) -> None:
     con = duckdb.connect(str(FDC_DUCKDB_PATH))
     try:
-        _attach_off(con)
+        _attach_catalog(con)
         build_gold_pairs(con)
         stratified_sample(con, n_per_stratum=n_per_stratum)
         train_holdout_split(con, holdout_frac=holdout_frac)

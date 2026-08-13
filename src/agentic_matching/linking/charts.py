@@ -98,7 +98,7 @@ _SAVE_KWARGS: dict[str, Any] = {"json_kwds": {"default": _json_default}}
 
 def _build_trained_linker(block_name: str) -> tuple[Linker, list[dict[str, Any]]]:
     attrs = load_latest_attributes(block_name)
-    linker, _fndds_df, _off_df, attrs = splink_model.build_linker(
+    linker, _fndds_df, _catalog_df, attrs = splink_model.build_linker(
         block_name, attrs, retain_intermediate_calculation_columns=True
     )
     splink_model.train(linker, attrs)

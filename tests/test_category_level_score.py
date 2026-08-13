@@ -1,16 +1,16 @@
-from agentic_matching.linking.evaluate import _category_level_score, _off_to_true_fndds
+from agentic_matching.linking.evaluate import _category_level_score, _catalog_to_true_fndds
 
 
-def test_off_to_true_fndds_reverses_the_mapping():
+def test_catalog_to_true_fndds_reverses_the_mapping():
     true_labels = {"f1": "o1", "f2": "o2"}
-    assert _off_to_true_fndds(true_labels) == {"o1": {"f1"}, "o2": {"f2"}}
+    assert _catalog_to_true_fndds(true_labels) == {"o1": {"f1"}, "o2": {"f2"}}
 
 
-def test_off_to_true_fndds_groups_multiple_fndds_ids_under_one_off_id():
-    # Verified real data quirk on the beans holdout: one off_code labeled as the true
+def test_catalog_to_true_fndds_groups_multiple_fndds_ids_under_one_catalog_id():
+    # Verified real data quirk on the beans holdout: one catalog_code labeled as the true
     # partner for several different fdc_ids.
     true_labels = {"f1": "o1", "f2": "o1", "f3": "o1"}
-    assert _off_to_true_fndds(true_labels) == {"o1": {"f1", "f2", "f3"}}
+    assert _catalog_to_true_fndds(true_labels) == {"o1": {"f1", "f2", "f3"}}
 
 
 def test_exact_match_counts_as_correct():
@@ -25,7 +25,7 @@ def test_exact_match_counts_as_correct():
 
 
 def test_one_of_several_true_partners_counts_as_correct():
-    # off_id has multiple genuinely-true fdc_ids (see _off_to_true_fndds) -- landing on
+    # catalog_id has multiple genuinely-true fdc_ids (see _catalog_to_true_fndds) -- landing on
     # ANY of them is correct, not just whichever was sampled first.
     predicted = {"o1": "f2"}
     true_partners = {"o1": {"f1", "f2", "f3"}}
@@ -65,7 +65,7 @@ def test_missing_description_neither_correct_nor_crashes():
     assert result["category_precision"] == 0.0  # still counted in the denominator (n_pred)
 
 
-def test_predicted_off_id_with_no_true_partners_is_skipped():
+def test_predicted_catalog_id_with_no_true_partners_is_skipped():
     predicted = {"o1": "f1", "o_decoy": "f2"}
     true_partners = {"o1": {"f1"}}
     fndds_desc = {"f1": "Black Beans", "f2": "Black Beans"}

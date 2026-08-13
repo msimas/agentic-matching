@@ -89,26 +89,26 @@ def select_final_attributes(rounds: list[AttributeRound]) -> list[dict[str, Any]
 
 def _load_block(block_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     fndds_path = BLOCKS_DIR / f"{block_name}_fndds.parquet"
-    off_path = BLOCKS_DIR / f"{block_name}_off.parquet"
-    if not fndds_path.exists() or not off_path.exists():
+    catalog_path = BLOCKS_DIR / f"{block_name}_catalog.parquet"
+    if not fndds_path.exists() or not catalog_path.exists():
         raise FileNotFoundError(
             f"Block subsets not found for '{block_name}'. Run the blocking agent "
             "(scripts/05_run_blocking_agent.py) first."
         )
-    return pd.read_parquet(fndds_path), pd.read_parquet(off_path)
+    return pd.read_parquet(fndds_path), pd.read_parquet(catalog_path)
 
 
-def _sample_pairs(fndds_df: pd.DataFrame, off_df: pd.DataFrame, n: int = 30) -> list[dict[str, Any]]:
+def _sample_pairs(fndds_df: pd.DataFrame, catalog_df: pd.DataFrame, n: int = 30) -> list[dict[str, Any]]:
     rng = random.Random(42)
     fndds_sample = fndds_df["description"].dropna().tolist()
-    off_sample = off_df["product_name"].dropna().tolist()
+    catalog_sample = catalog_df["product_name"].dropna().tolist()
     rng.shuffle(fndds_sample)
-    rng.shuffle(off_sample)
-    k = min(n, len(fndds_sample), len(off_sample)) or 0
-    return [{"fndds_description": f, "off_product_name": o} for f, o in zip(fndds_sample[:k], off_sample[:k])]
+    rng.shuffle(catalog_sample)
+    k = min(n, len(fndds_sample), len(catalog_sample)) or 0
+    return [{"fndds_description": f, "catalog_product_name": o} for f, o in zip(fndds_sample[:k], catalog_sample[:k])]
 
 
-def _field_stats(fndds_df: pd.DataFrame, off_df: pd.DataFrame, k: int = 15) -> dict[str, Any]:
+def _field_stats(fndds_df: pd.DataFrame, catalog_df: pd.DataFrame, k: int = 15) -> dict[str, Any]:
     """Most common real values of each side's categorical fields *within this block's
     population* (not the whole catalog -- see profiling.py for that, used by the
     blocking stage instead). Grounds categorical attribute proposals (e.g. fat_level's
@@ -119,14 +119,14 @@ def _field_stats(fndds_df: pd.DataFrame, off_df: pd.DataFrame, k: int = 15) -> d
     if "wweia_food_category_description" in fndds_df.columns:
         counts = fndds_df["wweia_food_category_description"].dropna().value_counts().head(k)
         stats["fndds_wweia_food_category"] = [{"value": v, "count": int(c)} for v, c in counts.items()]
-    if "categories_tags" in off_df.columns:
-        tags = pd.Series([t for tags in off_df["categories_tags"].dropna() for t in tags])
+    if "categories_tags" in catalog_df.columns:
+        tags = pd.Series([t for tags in catalog_df["categories_tags"].dropna() for t in tags])
         counts = tags.value_counts().head(k)
-        stats["off_categories_tags"] = [{"value": v, "count": int(c)} for v, c in counts.items()]
-    if "brands" in off_df.columns:
-        brands = off_df["brands"].dropna()
+        stats["catalog_categories_tags"] = [{"value": v, "count": int(c)} for v, c in counts.items()]
+    if "brands" in catalog_df.columns:
+        brands = catalog_df["brands"].dropna()
         counts = brands[brands.str.strip() != ""].value_counts().head(k)
-        stats["off_brands"] = [{"value": v, "count": int(c)} for v, c in counts.items()]
+        stats["catalog_brands"] = [{"value": v, "count": int(c)} for v, c in counts.items()]
     return stats
 
 
@@ -144,7 +144,7 @@ def _doc_freq(texts: list[Any], min_len: int = 4) -> tuple[Counter, int]:
 
 def _candidate_boolean_terms(
     fndds_df: pd.DataFrame,
-    off_df: pd.DataFrame,
+    catalog_df: pd.DataFrame,
     block_name: str,
     min_frac: float = 0.03,
     max_frac: float = 0.9,
@@ -161,7 +161,7 @@ def _candidate_boolean_terms(
     (a near-0%-or-100% split can't discriminate matches from non-matches at all).
 
     Mines FNDDS's `description` and OFF's `search_text` (product name + categories_tags
-    + brands -- see off_text.py) -- some real signal (e.g. "meat") shows up mainly via
+    + brands -- see catalog_text.py) -- some real signal (e.g. "meat") shows up mainly via
     OFF's categories_tags taxonomy rather than literally in the product name, so it's
     worth including, at the cost of some category-taxonomy boilerplate that
     `_ATTRIBUTE_MINING_STOPWORDS` filters out. Ranks candidates by the *minimum* of
@@ -186,29 +186,29 @@ def _candidate_boolean_terms(
         exclude |= {t, t + "s"}
 
     fndds_freq, n_fndds = _doc_freq(fndds_df["description"].tolist())
-    off_freq, n_off = _doc_freq(off_df["search_text"].tolist())
+    catalog_freq, n_catalog = _doc_freq(catalog_df["search_text"].tolist())
 
     def in_band(frac: float) -> bool:
         return min_frac <= frac <= max_frac
 
     candidates = []
-    for tok in set(fndds_freq) | set(off_freq):
+    for tok in set(fndds_freq) | set(catalog_freq):
         if tok in exclude:
             continue
         fndds_fraction = (fndds_freq.get(tok, 0) / n_fndds) if n_fndds else 0.0
-        off_fraction = (off_freq.get(tok, 0) / n_off) if n_off else 0.0
-        if in_band(fndds_fraction) or in_band(off_fraction):
-            candidates.append({"term": tok, "fndds_fraction": round(fndds_fraction, 4), "off_fraction": round(off_fraction, 4)})
-    candidates.sort(key=lambda c: (-min(c["fndds_fraction"], c["off_fraction"]), -(c["fndds_fraction"] + c["off_fraction"])))
+        catalog_fraction = (catalog_freq.get(tok, 0) / n_catalog) if n_catalog else 0.0
+        if in_band(fndds_fraction) or in_band(catalog_fraction):
+            candidates.append({"term": tok, "fndds_fraction": round(fndds_fraction, 4), "catalog_fraction": round(catalog_fraction, 4)})
+    candidates.sort(key=lambda c: (-min(c["fndds_fraction"], c["catalog_fraction"]), -(c["fndds_fraction"] + c["catalog_fraction"])))
     return candidates[:k]
 
 
-def _pooled_values(attrs: list[dict[str, Any]], fndds_df: pd.DataFrame, off_df: pd.DataFrame) -> pd.DataFrame:
+def _pooled_values(attrs: list[dict[str, Any]], fndds_df: pd.DataFrame, catalog_df: pd.DataFrame) -> pd.DataFrame:
     fndds_vals = compute_attribute_values(attrs, fndds_df["fndds_search_text"].tolist(), side="fndds")
-    off_vals = compute_attribute_values(attrs, off_df["search_text"].tolist(), side="off")
+    catalog_vals = compute_attribute_values(attrs, catalog_df["search_text"].tolist(), side="catalog")
     fndds_frame = pd.DataFrame(fndds_vals)
-    off_frame = pd.DataFrame(off_vals)
-    return pd.concat([fndds_frame, off_frame], ignore_index=True)
+    catalog_frame = pd.DataFrame(catalog_vals)
+    return pd.concat([fndds_frame, catalog_frame], ignore_index=True)
 
 
 def run_attribute_agent(
@@ -224,14 +224,14 @@ def run_attribute_agent(
     per-run diagnostic record, and isn't run-scoped."""
     run_dir = run_dir or run_artifacts_dir(block_name, new_run_id())
     client = client or get_llm_client()
-    fndds_df, off_df = _load_block(block_name)
-    sample_pairs = _sample_pairs(fndds_df, off_df)
-    field_stats = _field_stats(fndds_df, off_df)
-    candidate_terms = _candidate_boolean_terms(fndds_df, off_df, block_name)
+    fndds_df, catalog_df = _load_block(block_name)
+    sample_pairs = _sample_pairs(fndds_df, catalog_df)
+    field_stats = _field_stats(fndds_df, catalog_df)
+    candidate_terms = _candidate_boolean_terms(fndds_df, catalog_df, block_name)
     # For info_requests.py's "need more info" fulfillment (see attributes/revision.py)
     # -- plain text already loaded for this round, no extra query capability needed.
     fndds_texts = fndds_df["description"].tolist()
-    off_texts = off_df["search_text"].tolist()
+    catalog_texts = catalog_df["search_text"].tolist()
 
     rounds: list[AttributeRound] = []
     existing = get_seed_attributes(block_name)
@@ -277,7 +277,7 @@ def run_attribute_agent(
                     candidate_terms=candidate_terms,
                     guidance=guidance,
                     fndds_texts=fndds_texts,
-                    off_texts=off_texts,
+                    catalog_texts=catalog_texts,
                     temperature=temperature,
                 )
         except Exception:
@@ -302,7 +302,7 @@ def run_attribute_agent(
                 return rounds
             raise
 
-        values_df = _pooled_values(attrs, fndds_df, off_df)
+        values_df = _pooled_values(attrs, fndds_df, catalog_df)
         correlation_flags = check_correlations(values_df)
 
         rounds.append(

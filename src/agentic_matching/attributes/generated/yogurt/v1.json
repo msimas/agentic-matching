@@ -6,7 +6,7 @@
     "fndds_keywords": [
       "greek"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "greek",
       "grec"
     ]
@@ -18,7 +18,7 @@
     "fndds_keywords": [
       "plain"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "plain",
       "nature",
       "natural"
@@ -33,7 +33,7 @@
       "smoothie",
       "kefir"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "drink",
       "smoothie",
       "kefir",
@@ -48,7 +48,7 @@
       "baby food",
       "infant"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "baby",
       "infant",
       "toddler"
@@ -65,7 +65,7 @@
       "peach",
       "berry"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "fruit",
       "strawberry",
       "blueberry",
@@ -84,7 +84,7 @@
       "oat",
       "muesli"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "granola",
       "cereal",
       "oat",
@@ -102,7 +102,7 @@
           "fat free",
           "skim"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "fat free",
           "0% fat",
           "skimmed",
@@ -115,7 +115,7 @@
           "lowfat",
           "low-fat"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "low fat",
           "light",
           "1%",
@@ -126,7 +126,7 @@
         "fndds_keywords": [
           "whole milk"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "whole milk",
           "full fat",
           "entier"

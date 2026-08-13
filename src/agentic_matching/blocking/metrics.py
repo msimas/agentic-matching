@@ -21,7 +21,7 @@ from typing import Any
 
 import duckdb
 
-from agentic_matching.blocking.rules import fndds_predicate_sql, off_predicate_sql
+from agentic_matching.blocking.rules import fndds_predicate_sql, catalog_predicate_sql
 from agentic_matching.config import FDC_DUCKDB_PATH, OFF_SEARCH_TEXT_PARQUET
 
 log = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def combined_exclude_keywords(rule: dict[str, Any]) -> list[str]:
     the calibration ground truth (pair_completeness/holdout, below) honest about the
     same false-positive patterns the rule itself was told to exclude."""
     excludes = {k.lower() for k in rule.get("fndds", {}).get("exclude_keywords", []) if k}
-    excludes |= {k.lower() for k in rule.get("off", {}).get("exclude_keywords", []) if k}
+    excludes |= {k.lower() for k in rule.get("catalog", {}).get("exclude_keywords", []) if k}
     return sorted(excludes)
 
 
@@ -85,8 +85,8 @@ def term_predicate_sql(text_col: str, block_name: str) -> str:
 
 def _connect() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(FDC_DUCKDB_PATH))
-    off_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-    con.execute(f"CREATE OR REPLACE VIEW off_search AS SELECT * FROM read_parquet('{off_path}')")
+    catalog_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
+    con.execute(f"CREATE OR REPLACE VIEW catalog_search AS SELECT * FROM read_parquet('{catalog_path}')")
     con.execute(
         """
         CREATE OR REPLACE VIEW fndds_search AS
@@ -108,22 +108,22 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
 def block_sizes(con: duckdb.DuckDBPyConnection, rule: dict[str, Any]) -> dict[str, int]:
     n_fndds_total = con.execute("SELECT count(*) FROM fndds_search").fetchone()[0]
-    n_off_total = con.execute("SELECT count(*) FROM off_search").fetchone()[0]
+    n_catalog_total = con.execute("SELECT count(*) FROM catalog_search").fetchone()[0]
     fndds_pred = fndds_predicate_sql(rule)
-    off_pred = off_predicate_sql(rule)
+    catalog_pred = catalog_predicate_sql(rule)
     n_fndds_block = con.execute(f"SELECT count(*) FROM fndds_search WHERE {fndds_pred}").fetchone()[0]
-    n_off_block = con.execute(f"SELECT count(*) FROM off_search WHERE {off_pred}").fetchone()[0]
+    n_catalog_block = con.execute(f"SELECT count(*) FROM catalog_search WHERE {catalog_pred}").fetchone()[0]
     return {
         "n_fndds_total": n_fndds_total,
-        "n_off_total": n_off_total,
+        "n_catalog_total": n_catalog_total,
         "n_fndds_block": n_fndds_block,
-        "n_off_block": n_off_block,
+        "n_catalog_block": n_catalog_block,
     }
 
 
 def reduction_ratio(sizes: dict[str, int]) -> float:
-    total_pairs = sizes["n_fndds_total"] * sizes["n_off_total"]
-    block_pairs = sizes["n_fndds_block"] * sizes["n_off_block"]
+    total_pairs = sizes["n_fndds_total"] * sizes["n_catalog_total"]
+    block_pairs = sizes["n_fndds_block"] * sizes["n_catalog_block"]
     if total_pairs == 0:
         return 0.0
     return 1.0 - (block_pairs / total_pairs)
@@ -133,7 +133,7 @@ def pair_completeness(
     con: duckdb.DuckDBPyConnection, block_name: str, rule: dict[str, Any]
 ) -> dict[str, Any]:
     branded_term_pred = term_predicate_sql("lower(coalesce(branded_food_category, ''))", block_name)
-    off_term_pred = term_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", block_name)
+    catalog_term_pred = term_predicate_sql("lower(array_to_string(catalog_categories_tags, ' '))", block_name)
     # A canonical term matched against a *category* string, not a product name, can be
     # much coarser than intended: verified case (this project's "breaded_vegetables"
     # block) -- Branded Foods lumps onion rings into one mega-category, "French Fries,
@@ -147,7 +147,7 @@ def pair_completeness(
     # scoring the rule against a ground truth it was explicitly told to disagree with.
     excludes = combined_exclude_keywords(rule)
     branded_exclude_pred = exclude_predicate_sql("lower(coalesce(branded_food_category, ''))", excludes)
-    off_exclude_pred = exclude_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", excludes)
+    catalog_exclude_pred = exclude_predicate_sql("lower(array_to_string(catalog_categories_tags, ' '))", excludes)
     # Branded Foods (the FNDDS-side text stand-in here -- see module docstring) has no
     # WWEIA-equivalent categorization, so the fndds-side category predicate can't be
     # evaluated against this proxy; category_col=None falls back to keywords only for
@@ -155,24 +155,24 @@ def pair_completeness(
     # No explicit lower() needed here anymore -- _side_predicate_sql wraps its own
     # text_col internally now (see its docstring for the real bug that fixed).
     fndds_pred = fndds_predicate_sql(rule, text_col="fndds_style_description", category_col=None)
-    off_pred = off_predicate_sql(rule, text_col="coalesce(off_product_name, '')", category_col="off_categories_tags")
+    catalog_pred = catalog_predicate_sql(rule, text_col="coalesce(catalog_product_name, '')", category_col="catalog_categories_tags")
     row = con.execute(
         f"""
         WITH proxy AS (
             SELECT
-                fdc_id, off_code,
-                fndds_style_description, off_product_name, branded_food_category,
-                off_categories_tags
+                fdc_id, catalog_code,
+                fndds_style_description, catalog_product_name, branded_food_category,
+                catalog_categories_tags
             FROM gold_pairs
         ),
         true_block AS (
             SELECT * FROM proxy
-            WHERE ({branded_term_pred} OR {off_term_pred})
-              AND NOT ({branded_exclude_pred} OR {off_exclude_pred})
+            WHERE ({branded_term_pred} OR {catalog_term_pred})
+              AND NOT ({branded_exclude_pred} OR {catalog_exclude_pred})
         )
         SELECT
             count(*) AS n_true_block,
-            sum(CASE WHEN {fndds_pred} AND {off_pred} THEN 1 ELSE 0 END) AS n_recovered
+            sum(CASE WHEN {fndds_pred} AND {catalog_pred} THEN 1 ELSE 0 END) AS n_recovered
         FROM true_block
         """
     ).fetchone()
@@ -194,8 +194,8 @@ def evaluate_rule(block_name: str, rule: dict[str, Any]) -> dict[str, Any]:
             block_name,
             sizes["n_fndds_block"],
             sizes["n_fndds_total"],
-            sizes["n_off_block"],
-            sizes["n_off_total"],
+            sizes["n_catalog_block"],
+            sizes["n_catalog_total"],
             rr,
             pc["pair_completeness"],
             pc["n_recovered"],

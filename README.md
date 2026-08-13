@@ -1,9 +1,17 @@
 # Agentic Food Data Linkages Constructor — POC
 
 LLM-assisted probabilistic record linkage: connects USDA FoodData Central (FDC) records
-to Open Food Facts (OFF), using `splink` (DuckDB backend) for the probabilistic matching
-and a small LLM to propose/iterate blocking rules and matching attributes — mirroring
-the manual SME workflow this is meant to assist. See `PLAN.md` for the full design.
+to a food-product database (Open Food Facts today), using `splink` (DuckDB backend) for
+the probabilistic matching and a small LLM to propose/iterate blocking rules and matching
+attributes — mirroring the manual SME workflow this is meant to assist. See `PLAN.md` for
+the full design.
+
+FNDDS is the fixed anchor side in every stage of this pipeline; the "other" side is a
+pluggable `CatalogSource` (`catalog_source.py`) — see "The pluggable second side" below
+for what that means and how to point the pipeline at a different food-product database.
+Open Food Facts (OFF) is the one real instantiation in use today, so "OFF"/"catalog" show
+up interchangeably throughout this document and the codebase: `catalog_*` names are the
+generic concept, "OFF" is what that concept concretely means right now.
 
 ## Setup
 
@@ -24,6 +32,50 @@ This is Open Food Facts' full product export in parquet form (~7.7GB), so the
 download takes a while; get the latest version straight from the
 [Hugging Face dataset page](https://huggingface.co/datasets/openfoodfacts/product-database)
 if this URL ever moves.
+
+## The pluggable "second side" (`catalog_source.py`)
+
+Every stage of this pipeline (blocking, matching attributes, linking, profiling,
+calibration) reads the non-FNDDS side's paths, column names, category-match semantics,
+and text-flattening logic from a single `CatalogSource` value — `catalog_source.py`'s
+`ACTIVE_CATALOG_SOURCE` — instead of hardcoding Open Food Facts' specific shape.
+`CatalogSource` is a plain, frozen dataclass:
+
+```python
+CatalogSource(
+    name="off", display_name="Open Food Facts (OFF)",
+    raw_parquet=OFF_PARQUET, search_text_parquet=OFF_SEARCH_TEXT_PARQUET,
+    id_col="code", product_name_col="product_name", category_col="categories_tags",
+    category_kind="array_contains",  # OFF's categories_tags is an array of tags
+    brand_col="brands", search_text_col="search_text",
+    generic_term_min_doc_count=None,  # derived from row count -- see profiling.py
+    flatten_sql=off_text.flatten,     # OFF's struct/array -> flat-text preprocessing
+)
+```
+
+Swapping the pipeline to a different food-product database (e.g. a proprietary retail
+catalog like Circana, which PLAN.md originally framed OFF as standing in for) means
+constructing a new `CatalogSource` for it — its own paths, column names,
+`category_kind` (`"exact"` for a single scalar category field, like FNDDS's own WWEIA
+category; `"array_contains"` for an array of tags, like OFF's) and its own
+`flatten_sql` implementation if its raw schema needs preprocessing into a flat
+`search_text` column the way OFF's struct/array fields do — then pointing
+`ACTIVE_CATALOG_SOURCE` at it. No blocking/attributes/linking/profiling code needs to
+change; `tests/test_catalog_source_abstraction.py` exercises a synthetic second
+`CatalogSource` (different column names, `"exact"` category matching, a no-op
+`flatten_sql`) specifically to confirm this holds, not just that OFF-with-new-names
+still works.
+
+FNDDS itself is NOT given a matching adapter — that asymmetry is deliberate, not an
+oversight: FNDDS is the fixed anchor in every real use case this project targets
+(~5.4K rows, no struct/array flattening needed, no scale-tuned constants), while the
+"other side" is what's expected to vary. See `catalog_source.py`'s module docstring
+for the full reasoning.
+
+Everywhere else in this document, `off_*`/`catalog_*` names refer to the SAME thing —
+the active `CatalogSource` — since OFF is that source today; a schema/column name
+described as "OFF's" below is accurate for the current deployment, not a hardcoded
+assumption in the code itself.
 
 ## Pipeline
 
@@ -58,16 +110,18 @@ spreadsheet to inspect the actual match results.
 **`final_matches.csv`** (no round number — overwritten each round, reflects the *best*
 round the loop produced this run, not necessarily the last one; see `select_best_round`
 below) is the actual deliverable, distinct from the review CSV above:
-`linking/evaluate.py::best_match_per_off` collapses every candidate pair down to
-the single best (highest `match_probability`) FNDDS record per OFF/commercial-product
+`linking/evaluate.py::best_match_per_catalog` collapses every candidate pair down to
+the single best (highest `match_probability`) FNDDS record per catalog/commercial-product
 record. The real goal here is attaching nutritional information (FNDDS) to commercial
 products — a product should end up with *one* nutrition profile attached, not several
 competing FNDDS candidates — while one FNDDS record can legitimately attach to many
 different commercial products (many brands' "Black Beans" can all point at the same
-"Black beans, canned" nutrition profile), so only the OFF side is deduplicated. Nothing
-about this assumes OFF specifically: it only needs a `unique_id_r` column identifying
-the commercial-product side, so the same pipeline would work unchanged against a
-proprietary retail catalog (e.g. Circana) substituted for OFF.
+"Black beans, canned" nutrition profile), so only the catalog side is deduplicated.
+Nothing about this assumes OFF specifically: `best_match_per_catalog` only needs a
+`unique_id_r` column identifying the commercial-product side, so the same pipeline
+works unchanged against whatever `ACTIVE_CATALOG_SOURCE` is pointed at (see "The
+pluggable second side" above) — e.g. a proprietary retail catalog like Circana
+substituted for OFF.
 
 ### A later round can regress -- picking the best round, not just the last one
 
@@ -189,16 +243,18 @@ guesswork:
 - **Blocking** (`blocking/agent_loop.py`): each round's prompt includes `corpus_stats`
   — each side's catalog size plus its catalog-wide-common terms, with the system prompt
   instructing the LLM to avoid proposing any of them as a standalone keyword unless the
-  block's own name. For the OFF side specifically, `llm/mock.py` also *enforces* this as
-  a hard rejection (`profiling.OFF_GENERIC_TERM_MIN_DOC_COUNT` = 15,000 estimated
-  matches) rather than just suggesting it, since the mock can't reason about breadth the
-  way a real LLM should. There's deliberately no equivalent hard rejection for FNDDS —
-  it's only ~5.4K rows total, so even a broad FNDDS keyword isn't a memory risk, and
-  applying the same bar there only throws away good keywords (e.g. "cooked", "canned")
-  for no safety benefit.
+  block's own name. For the catalog side specifically, `llm/mock.py` also *enforces*
+  this as a hard rejection (`profiling.generic_term_min_doc_count("catalog")` — a
+  FRACTION of catalog size, not a fixed number, calibrated to reproduce OFF's original
+  verified 15,000-match threshold at OFF's real ~4.66M-row scale, but meaningful at a
+  different catalog's scale too) rather than just suggesting it, since the mock can't
+  reason about breadth the way a real LLM should. There's deliberately no equivalent
+  hard rejection for FNDDS — it's only ~5.4K rows total, so even a broad FNDDS keyword
+  isn't a memory risk, and applying the same bar there only throws away good keywords
+  (e.g. "cooked", "canned") for no safety benefit.
 - **Matching attributes** (`attributes/agent_loop.py`): each round's prompt includes
   `field_stats` — the most common real values of each side's categorical fields
-  (OFF `categories_tags`/`brands`, FNDDS's WWEIA category) *within this block's
+  (OFF's `categories_tags`/`brands`, FNDDS's WWEIA category) *within this block's
   population*, so a proposed categorical attribute (e.g. `bean_type`'s categories) can
   be grounded in values that actually occur rather than invented from world knowledge.
 
@@ -224,8 +280,10 @@ Both datasets actually carry clean, human-curated categorical labels for exactly
 kind of thing — FNDDS's WWEIA food category (e.g. "Yogurt, regular", "Yogurt, Greek")
 and OFF's `categories_tags` (e.g. `en:yogurts`) — so a blocking rule can now specify
 `"categories"` per side (`blocking/rules.py`), OR'd with the keyword predicate:
-FNDDS matches by exact `wweia_food_category_description` equality, OFF by
-`categories_tags` array containment. `blocking/agent_loop.py::_category_options` surfaces
+FNDDS always matches by exact `wweia_food_category_description` equality
+(`category_kind="exact"`), the catalog side by whatever `ACTIVE_CATALOG_SOURCE.
+category_kind` says (OFF's `categories_tags` is `"array_contains"`, since it's an
+array of tags, not a single value). `blocking/agent_loop.py::_category_options` surfaces
 the real category values seen among records already plausibly in the block (same
 seed-term-filtered population used for keyword-mining samples) as `category_options` in
 the prompt, so the LLM (or mock) picks from real values rather than inventing category
@@ -353,8 +411,9 @@ Every agent-loop script calls `get_llm_client()`, selected by `LLM_DEVICE`.
 
 ## Known constraints at this project's data scale
 
-The pipeline pre-filters to per-block subsets (`data/blocks/<block>_{fndds,off}.parquet`,
-written once by `scripts/05_run_blocking_agent.py`) before splink ever runs, so splink
+The pipeline pre-filters to per-block subsets
+(`data/blocks/<block>_{fndds,catalog}.parquet`, written once by
+`scripts/05_run_blocking_agent.py`) before splink ever runs, so splink
 never touches the full ~4.66M-row OFF table directly — but the blocks are still
 asymmetric (hundreds to low thousands of FNDDS records vs. tens of thousands of OFF
 records), and a few things below turned out to matter at that scale. All are fixed, but
@@ -384,14 +443,14 @@ worth double-checking on a memory-constrained machine in particular:
   is too loose at OFF's ~4.66M-row scale (even a "rare" token implies a large absolute
   match count) — see the "Corpus profiling" section above for the actual fix
   (`profiling.py` + `corpus_stats` in the prompt + a hard rejection in `llm/mock.py` for
-  the OFF side). This only *enforces* on the mock; a real LLM should reason about
+  the catalog side). This only *enforces* on the mock; a real LLM should reason about
   keyword breadth on its own given the same `corpus_stats`, but if a proposed rule still
-  produces an outsized block, check `data/blocks/<block>_off.parquet`'s row count before
-  running the linking stage.
+  produces an outsized block, check `data/blocks/<block>_catalog.parquet`'s row count
+  before running the linking stage.
 
 If `scripts/07_...` still runs long or memory climbs unbounded, stop it and check
-`data/blocks/<block>_off.parquet` row counts — a much larger OFF-side block than the
-ones checked in here may need tighter blocking before EM.
+`data/blocks/<block>_catalog.parquet` row counts — a much larger catalog-side block than
+the ones checked in here may need tighter blocking before EM.
 
 - **TODO: linking holdout exclusion is seed-rule-only, not rule-actual.**
   `linking/evaluate.py::_load_block_holdout` filters out known false-positive

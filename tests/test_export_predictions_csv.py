@@ -51,7 +51,7 @@ def test_renames_id_and_description_columns(tmp_path):
     out_path = tmp_path / "matches.csv"
     export_predictions_csv(_predictions(), ATTRS, out_path)
     written = pd.read_csv(out_path)
-    assert {"fndds_id", "fndds_description", "off_code", "off_product_name"} <= set(written.columns)
+    assert {"fndds_id", "fndds_description", "catalog_code", "catalog_product_name"} <= set(written.columns)
     assert "unique_id_l" not in written.columns
 
 

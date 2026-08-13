@@ -105,14 +105,14 @@ _CATEGORICAL_EXCEPTIONS: dict[str, list[dict[str, Any]]] = {
             "kind": "categorical",
             "description": "Variety of bean",
             "categories": {
-                "black": {"fndds_keywords": ["black bean"], "off_keywords": ["black bean", "haricot noir"]},
-                "pinto": {"fndds_keywords": ["pinto"], "off_keywords": ["pinto"]},
-                "kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]},
-                "navy": {"fndds_keywords": ["navy bean", "white bean"], "off_keywords": ["navy bean", "white bean"]},
-                "garbanzo": {"fndds_keywords": ["garbanzo", "chickpea"], "off_keywords": ["garbanzo", "chickpea", "pois chiche"]},
-                "lima": {"fndds_keywords": ["lima"], "off_keywords": ["lima"]},
-                "refried": {"fndds_keywords": ["refried"], "off_keywords": ["refried", "refritos"]},
-                "lentil": {"fndds_keywords": ["lentil"], "off_keywords": ["lentil", "lentille"]},
+                "black": {"fndds_keywords": ["black bean"], "catalog_keywords": ["black bean", "haricot noir"]},
+                "pinto": {"fndds_keywords": ["pinto"], "catalog_keywords": ["pinto"]},
+                "kidney": {"fndds_keywords": ["kidney"], "catalog_keywords": ["kidney"]},
+                "navy": {"fndds_keywords": ["navy bean", "white bean"], "catalog_keywords": ["navy bean", "white bean"]},
+                "garbanzo": {"fndds_keywords": ["garbanzo", "chickpea"], "catalog_keywords": ["garbanzo", "chickpea", "pois chiche"]},
+                "lima": {"fndds_keywords": ["lima"], "catalog_keywords": ["lima"]},
+                "refried": {"fndds_keywords": ["refried"], "catalog_keywords": ["refried", "refritos"]},
+                "lentil": {"fndds_keywords": ["lentil"], "catalog_keywords": ["lentil", "lentille"]},
             },
         },
         {
@@ -122,9 +122,9 @@ _CATEGORICAL_EXCEPTIONS: dict[str, list[dict[str, Any]]] = {
             "categories": {
                 "low_sodium": {
                     "fndds_keywords": ["low sodium", "no salt", "reduced sodium"],
-                    "off_keywords": ["low sodium", "no salt", "reduced sodium", "sans sel"],
+                    "catalog_keywords": ["low sodium", "no salt", "reduced sodium", "sans sel"],
                 },
-                "regular": {"fndds_keywords": [], "off_keywords": []},
+                "regular": {"fndds_keywords": [], "catalog_keywords": []},
             },
         },
     ],
@@ -148,7 +148,7 @@ def _mined_boolean_attributes(candidate_terms: list[dict[str, Any]], k: int = _M
                 "kind": "boolean",
                 "description": f"Does the text mention '{term}'?",
                 "fndds_keywords": [term],
-                "off_keywords": [term],
+                "catalog_keywords": [term],
             }
         )
     return attrs
@@ -193,10 +193,10 @@ class MockChatClient(ChatClient):
         corpus_stats = payload.get("corpus_stats")
         # Only the OFF side (~4.66M rows) carries real memory risk from an overly-broad
         # keyword -- FNDDS (~5.4K rows total) doesn't need (and shouldn't get) the same
-        # genericness bar; see profiling.OFF_GENERIC_TERM_MIN_DOC_COUNT.
+        # genericness bar; see profiling.generic_term_min_doc_count.
         fndds_mined = _top_tokens(payload.get("fndds_sample_descriptions", []), reject=set())
-        off_mined = _top_tokens(
-            payload.get("off_sample_product_names", []), reject=_reject_terms(corpus_stats, "off")
+        catalog_mined = _top_tokens(
+            payload.get("catalog_sample_product_names", []), reject=_reject_terms(corpus_stats, "catalog")
         )
 
         # Categories whose own (short, human-curated) name contains the block's name --
@@ -207,7 +207,7 @@ class MockChatClient(ChatClient):
         # already given in every prompt regardless.
         category_options = payload.get("category_options") or {}
         fndds_categories = set(_matching_categories(category_options.get("fndds", []), block))
-        off_categories = set(_matching_categories(category_options.get("off", []), block))
+        catalog_categories = set(_matching_categories(category_options.get("catalog", []), block))
 
         prev = payload.get("previous_rule")
         metrics = payload.get("previous_round_metrics")
@@ -219,11 +219,11 @@ class MockChatClient(ChatClient):
         # metrics yet, which the keyword-widening logic below (gated on `metrics`)
         # doesn't otherwise account for.
         fndds_exclude = (prev or {}).get("fndds", {}).get("exclude_keywords", [])
-        off_exclude = (prev or {}).get("off", {}).get("exclude_keywords", [])
+        catalog_exclude = (prev or {}).get("catalog", {}).get("exclude_keywords", [])
         fndds_categories |= set((prev or {}).get("fndds", {}).get("categories", []))
-        off_categories |= set((prev or {}).get("off", {}).get("categories", []))
+        catalog_categories |= set((prev or {}).get("catalog", {}).get("categories", []))
         seed_fndds_kw = set(seed) | set((prev or {}).get("fndds", {}).get("keywords", []))
-        seed_off_kw = set(seed) | set((prev or {}).get("off", {}).get("keywords", []))
+        seed_catalog_kw = set(seed) | set((prev or {}).get("catalog", {}).get("keywords", []))
 
         # When a clean matching category exists, trust it and don't widen beyond the
         # seed vocabulary via speculative keyword mining: mined candidates are drawn
@@ -237,9 +237,9 @@ class MockChatClient(ChatClient):
         # "plain"/"whole" get mined in on top. Falls back to mining when no matching
         # category was found (e.g. a block with no clean corresponding taxonomy entry).
         fndds_kw = sorted(seed_fndds_kw) if fndds_categories else sorted(seed_fndds_kw | set(fndds_mined))
-        off_kw = sorted(seed_off_kw) if off_categories else sorted(seed_off_kw | set(off_mined))
+        catalog_kw = sorted(seed_catalog_kw) if catalog_categories else sorted(seed_catalog_kw | set(catalog_mined))
         fndds_categories = sorted(fndds_categories)
-        off_categories = sorted(off_categories)
+        catalog_categories = sorted(catalog_categories)
 
         if prev and metrics:
             # Widen if pair completeness is low; otherwise keep stable (simulates
@@ -247,16 +247,16 @@ class MockChatClient(ChatClient):
             pc = metrics.get("pair_completeness", 1.0)
             if pc < 0.9:
                 fndds_kw = sorted(set(prev.get("fndds", {}).get("keywords", [])) | set(fndds_kw))
-                off_kw = sorted(set(prev.get("off", {}).get("keywords", [])) | set(off_kw))
+                catalog_kw = sorted(set(prev.get("catalog", {}).get("keywords", [])) | set(catalog_kw))
             else:
                 fndds_kw = prev.get("fndds", {}).get("keywords", fndds_kw)
-                off_kw = prev.get("off", {}).get("keywords", off_kw)
+                catalog_kw = prev.get("catalog", {}).get("keywords", catalog_kw)
             fndds_categories = prev.get("fndds", {}).get("categories", fndds_categories)
-            off_categories = prev.get("off", {}).get("categories", off_categories)
+            catalog_categories = prev.get("catalog", {}).get("categories", catalog_categories)
 
         return {
             "fndds": {"keywords": fndds_kw, "categories": fndds_categories, "exclude_keywords": fndds_exclude},
-            "off": {"keywords": off_kw, "categories": off_categories, "exclude_keywords": off_exclude},
+            "catalog": {"keywords": catalog_kw, "categories": catalog_categories, "exclude_keywords": catalog_exclude},
             "rationale": (
                 f"[mock] seed vocabulary + top frequent tokens mined from the '{block}' "
                 "sample descriptions on each side, plus any on-topic category found "
@@ -335,7 +335,7 @@ class MockChatClient(ChatClient):
                     "kind": "boolean",
                     "description": f"[mock] placeholder for: {entry.get('reason', '')}",
                     "fndds_keywords": [block],
-                    "off_keywords": [block],
+                    "catalog_keywords": [block],
                 }
             attrs.append(attr)
         return {"attributes": attrs}

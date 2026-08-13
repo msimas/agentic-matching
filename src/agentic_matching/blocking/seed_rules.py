@@ -21,7 +21,7 @@ seeding.
 An entry may also carry a "notes" key: a freeform prompt fragment (not a structured
 keyword/category/exclude_keywords list) for domain knowledge that doesn't fit that
 schema -- e.g. "these two dish names must refer to the same specific vegetable, not just
-both be 'a fried vegetable'". Unlike "fndds"/"off", which only seed round 0 (the LLM's
+both be 'a fried vegetable'". Unlike "fndds"/"catalog", which only seed round 0 (the LLM's
 own revised rule replaces them from round 1 on -- see run_blocking_agent), "notes" is
 echoed to the LLM on *every* round via build_blocking_prompt, since it's persistent
 guidance about the block's domain, not part of the rule state being iterated on.

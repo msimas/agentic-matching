@@ -21,14 +21,14 @@ from agentic_matching.config import (
 
 log = logging.getLogger(__name__)
 
-Side = Literal["fndds", "off"]
+Side = Literal["fndds", "catalog"]
 
 _TOKEN_DOC_FREQ_PATHS: dict[Side, str] = {
     "fndds": "fndds_token_doc_freq.parquet",
-    "off": "off_token_doc_freq.parquet",
+    "catalog": "catalog_token_doc_freq.parquet",
 }
 _META_PATH = PROFILING_DIR / "meta.json"
-_OFF_CATEGORY_TAG_FREQ_PATH = PROFILING_DIR / "off_category_tag_freq.parquet"
+_OFF_CATEGORY_TAG_FREQ_PATH = PROFILING_DIR / "catalog_category_tag_freq.parquet"
 _FNDDS_WWEIA_CATEGORY_FREQ_PATH = PROFILING_DIR / "fndds_wweia_category_freq.parquet"
 _BRANDED_CATEGORY_FREQ_PATH = PROFILING_DIR / "branded_food_category_freq.parquet"
 
@@ -59,19 +59,19 @@ def build(force: bool = False) -> None:
         return
     PROFILING_DIR.mkdir(parents=True, exist_ok=True)
 
-    off_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-    off_raw_path = str(OFF_PARQUET).replace("'", "''")
+    catalog_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
+    catalog_raw_path = str(OFF_PARQUET).replace("'", "''")
     con = duckdb.connect()
-    con.execute(f"CREATE OR REPLACE VIEW texts AS SELECT code AS unique_id, product_name FROM read_parquet('{off_path}')")
-    n_off = con.execute("SELECT count(*) FROM texts").fetchone()[0]
+    con.execute(f"CREATE OR REPLACE VIEW texts AS SELECT code AS unique_id, product_name FROM read_parquet('{catalog_path}')")
+    n_catalog = con.execute("SELECT count(*) FROM texts").fetchone()[0]
     con.execute(
-        f"COPY ({_token_doc_freq_sql('product_name')}) TO '{PROFILING_DIR / _TOKEN_DOC_FREQ_PATHS['off']}' (FORMAT PARQUET)"
+        f"COPY ({_token_doc_freq_sql('product_name')}) TO '{PROFILING_DIR / _TOKEN_DOC_FREQ_PATHS['catalog']}' (FORMAT PARQUET)"
     )
     con.execute(
         f"""
         COPY (
             SELECT tag, count(*) AS doc_count
-            FROM (SELECT unnest(categories_tags) AS tag FROM read_parquet('{off_raw_path}'))
+            FROM (SELECT unnest(categories_tags) AS tag FROM read_parquet('{catalog_raw_path}'))
             WHERE tag IS NOT NULL
             GROUP BY tag
             HAVING count(*) >= {_MIN_DOC_COUNT}
@@ -110,8 +110,8 @@ def build(force: bool = False) -> None:
     )
     con.close()
 
-    _META_PATH.write_text(json.dumps({"n_fndds": n_fndds, "n_off": n_off}, indent=2))
-    log.info("Built profiling artifacts under %s (n_fndds=%d, n_off=%d)", PROFILING_DIR, n_fndds, n_off)
+    _META_PATH.write_text(json.dumps({"n_fndds": n_fndds, "n_catalog": n_catalog}, indent=2))
+    log.info("Built profiling artifacts under %s (n_fndds=%d, n_catalog=%d)", PROFILING_DIR, n_fndds, n_catalog)
 
 
 @functools.lru_cache(maxsize=1)
@@ -135,9 +135,9 @@ def _token_doc_freq(side: Side) -> dict[str, int]:
 
 
 @functools.lru_cache(maxsize=1)
-def _category_freq(kind: Literal["off_categories_tags", "fndds_wweia", "branded_food_category"]) -> dict[str, int]:
+def _category_freq(kind: Literal["catalog_categories_tags", "fndds_wweia", "branded_food_category"]) -> dict[str, int]:
     path = {
-        "off_categories_tags": _OFF_CATEGORY_TAG_FREQ_PATH,
+        "catalog_categories_tags": _OFF_CATEGORY_TAG_FREQ_PATH,
         "fndds_wweia": _FNDDS_WWEIA_CATEGORY_FREQ_PATH,
         "branded_food_category": _BRANDED_CATEGORY_FREQ_PATH,
     }[kind]
@@ -153,16 +153,35 @@ def catalog_doc_count(side: Side, token: str) -> int:
     return _token_doc_freq(side).get(token.lower(), 0)
 
 
-# Empirically-tuned absolute doc-count floor for treating an OFF-side token as "too
-# generic to be a useful standalone keyword": at OFF's ~4.66M-row scale a token needs a
-# *count*, not just a top-K rank, to reliably catch generic words -- a fixed top-K list
-# let some equally-broad terms (e.g. "green"/"black", each matching ~19-23K records)
-# rank just outside the cutoff while still being just as harmful to block size as the
-# ones that made the list. There is deliberately no equivalent for FNDDS: FNDDS only has
-# ~5.4K rows total, so even a keyword matching a large share of it is not a memory risk,
-# and applying an OFF-scale genericness bar there only rejects perfectly good FNDDS
-# keywords (e.g. "cooked", "canned") for no safety benefit.
-OFF_GENERIC_TERM_MIN_DOC_COUNT = 15_000
+# Empirically-tuned absolute doc-count floor for treating a large-catalog-side token as
+# "too generic to be a useful standalone keyword": at OFF's ~4.66M-row scale a token
+# needs a *count*, not just a top-K rank, to reliably catch generic words -- a fixed
+# top-K list let some equally-broad terms (e.g. "green"/"black", each matching ~19-23K
+# records) rank just outside the cutoff while still being just as harmful to block size
+# as the ones that made the list. There is deliberately no equivalent bar for FNDDS:
+# FNDDS only has ~5.4K rows total, so even a keyword matching a large share of it is not
+# a memory risk, and applying a large-catalog genericness bar there only rejects
+# perfectly good FNDDS keywords (e.g. "cooked", "canned") for no safety benefit.
+#
+# Expressed as a FRACTION of catalog size, not a fixed absolute number, so a future
+# catalog of a different scale gets a bar that means the same thing (a token common
+# enough to be structurally useless as a standalone keyword) rather than either OFF's
+# literal 15,000 always being either too strict (a much smaller catalog) or too loose (a
+# much larger one). Calibrated so `generic_term_min_doc_count("catalog")` reproduces OFF's
+# original, verified 15,000 threshold almost exactly (15,000 / 4,660,206 real OFF rows).
+GENERIC_TERM_MIN_DOC_COUNT_FRACTION = 15_000 / 4_660_206
+# A tiny catalog (a handful of thousand rows, like FNDDS itself) would otherwise get a
+# near-zero threshold from the fraction alone -- this floor keeps the bar meaningful
+# even then. Deliberately far below OFF's real threshold; it only matters for a catalog
+# small enough that the fraction alone would round below it.
+GENERIC_TERM_MIN_DOC_COUNT_FLOOR = 500
+
+
+def generic_term_min_doc_count(side: Side) -> int:
+    """The absolute doc-count floor for `high_frequency_terms(side, min_doc_count=...)`
+    -- derived from `side`'s own catalog size (see GENERIC_TERM_MIN_DOC_COUNT_FRACTION's
+    docstring), not a number tuned for one specific catalog's scale."""
+    return max(GENERIC_TERM_MIN_DOC_COUNT_FLOOR, round(n_records(side) * GENERIC_TERM_MIN_DOC_COUNT_FRACTION))
 
 
 def _rank_terms(
@@ -184,7 +203,7 @@ def high_frequency_terms(
     side: Side, k: int = 40, min_len: int = 4, min_doc_count: int | None = None, max_terms: int = 200
 ) -> list[dict[str, Any]]:
     """Catalog-wide common tokens on `side`, with their document count and fraction of
-    the catalog -- meant to be shown to the LLM (and, for `side="off"`, used by
+    the catalog -- meant to be shown to the LLM (and, for `side="catalog"`, used by
     llm/mock.py) as terms that are too generic to usefully narrow a block down on their
     own, whatever block is being proposed.
 
@@ -196,7 +215,7 @@ def high_frequency_terms(
 
 
 def top_category_values(
-    kind: Literal["off_categories_tags", "fndds_wweia", "branded_food_category"], k: int = 20
+    kind: Literal["catalog_categories_tags", "fndds_wweia", "branded_food_category"], k: int = 20
 ) -> list[dict[str, Any]]:
     """The `k` most common values of a categorical field, for grounding matching
     attribute proposals in values that actually occur in the data."""
@@ -208,6 +227,6 @@ def top_category_values(
 if __name__ == "__main__":
     configure_logging()
     build(force=True)
-    print(f"n_fndds={n_records('fndds')} n_off={n_records('off')}")
-    print("off high-frequency terms:", [t["term"] for t in high_frequency_terms("off", k=15)])
+    print(f"n_fndds={n_records('fndds')} n_catalog={n_records('catalog')}")
+    print("catalog high-frequency terms:", [t["term"] for t in high_frequency_terms("catalog", k=15)])
     print("fndds high-frequency terms:", [t["term"] for t in high_frequency_terms("fndds", k=15)])

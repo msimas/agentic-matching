@@ -25,8 +25,8 @@ def test_impostor_with_identical_text_makes_it_ambiguous():
 
 
 def test_shared_text_among_a_true_items_own_partners_is_not_an_impostor():
-    # off_id's true set already contains BOTH fdc_ids sharing that text -- landing on
-    # either is correct (see _off_to_true_fndds), so this is still resolvable.
+    # catalog_id's true set already contains BOTH fdc_ids sharing that text -- landing on
+    # either is correct (see _catalog_to_true_fndds), so this is still resolvable.
     true_partners = {"o1": {"f1", "f2"}}
     fndds_desc = {"f1": "Black Beans", "f2": "black beans"}
     result = _resolvable_ceiling(true_partners, fndds_desc)

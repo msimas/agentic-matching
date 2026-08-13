@@ -11,7 +11,7 @@ edited by a domain expert without touching Python:
     propose from scratch, as intended.
 
   - SEED_ATTRIBUTE_NOTES: freeform prompt fragments for blocks that need domain
-    guidance the structured {name, kind, fndds_keywords/off_keywords} attribute schema
+    guidance the structured {name, kind, fndds_keywords/catalog_keywords} attribute schema
     can't express on its own -- e.g. "these two attributes must agree on WHICH specific
     thing, not just that both have *a* thing of that general kind". Unlike
     SEED_ATTRIBUTES (yogurt's complete, hand-authored attribute set), a note here

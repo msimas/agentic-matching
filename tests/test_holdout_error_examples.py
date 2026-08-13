@@ -76,10 +76,10 @@ def test_empty_true_labels_returns_empty_lists():
 
 
 # -- selection direction: best FNDDS match PER OFF RECORD, mirroring production's
-# best_match_per_off (see score_against_holdout's docstring for why) --------------
+# best_match_per_catalog (see score_against_holdout's docstring for why) --------------
 
 
-def test_dedup_is_per_off_record_not_per_fndds_record():
+def test_dedup_is_per_catalog_record_not_per_fndds_record():
     # Two different FNDDS candidates competing for the SAME off record -- only the
     # higher-scoring one should be considered (dedup on unique_id_r).
     preds = _preds(
@@ -94,8 +94,8 @@ def test_dedup_is_per_off_record_not_per_fndds_record():
 
 
 def test_landing_on_any_true_partner_is_not_a_false_positive():
-    # off_id has multiple genuinely-true fdc_ids -- landing on the one NOT sampled as
-    # "true_labels[fdc]" for this off_id must still not be flagged wrong.
+    # catalog_id has multiple genuinely-true fdc_ids -- landing on the one NOT sampled as
+    # "true_labels[fdc]" for this catalog_id must still not be flagged wrong.
     true_labels = {"f1": "o1", "f2": "o1"}  # both f1 and f2 are true partners of o1
     preds = _preds([{"unique_id_l": "f2", "unique_id_r": "o1", "match_probability": 0.9, "description_l": "a", "description_r": "b"}])
     result = _holdout_error_examples(preds, true_labels, threshold=0.5, n=5)

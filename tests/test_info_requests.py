@@ -3,11 +3,11 @@ from agentic_matching.attributes.info_requests import MAX_REQUESTS, fulfill_requ
 
 def test_term_frequency_counts_both_sides():
     fndds_texts = ["Black beans, canned", "Pinto beans"]
-    off_texts = ["Black Beans", "Kidney Beans", "Chili with beans"]
-    answers = fulfill_requests([{"kind": "term_frequency", "term": "black"}], fndds_texts, off_texts)
+    catalog_texts = ["Black Beans", "Kidney Beans", "Chili with beans"]
+    answers = fulfill_requests([{"kind": "term_frequency", "term": "black"}], fndds_texts, catalog_texts)
     assert answers[0]["kind"] == "term_frequency"
     assert answers[0]["fndds_count"] == 1
-    assert answers[0]["off_count"] == 1
+    assert answers[0]["catalog_count"] == 1
     assert answers[0]["fndds_fraction"] == 0.5
 
 
@@ -62,4 +62,4 @@ def test_none_requested():
 def test_empty_text_lists_do_not_divide_by_zero():
     answers = fulfill_requests([{"kind": "term_frequency", "term": "x"}], [], [])
     assert answers[0]["fndds_fraction"] == 0.0
-    assert answers[0]["off_fraction"] == 0.0
+    assert answers[0]["catalog_fraction"] == 0.0

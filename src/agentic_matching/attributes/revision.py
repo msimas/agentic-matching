@@ -48,7 +48,7 @@ from agentic_matching.llm.prompts import build_definition_prompt, build_gap_iden
 log = logging.getLogger(__name__)
 
 
-def ask_with_followup(client, system: str, user: str, temperature: float, fndds_texts: list[Any], off_texts: list[Any]) -> dict[str, Any]:
+def ask_with_followup(client, system: str, user: str, temperature: float, fndds_texts: list[Any], catalog_texts: list[Any]) -> dict[str, Any]:
     """Calls `client.complete_json`; if the response is a "need_more_info" request
     (see llm/prompts.py's _NEED_MORE_INFO_NOTE), fulfills it from data already in
     memory (info_requests.fulfill_requests -- no new query capability, no extra LLM
@@ -57,7 +57,7 @@ def ask_with_followup(client, system: str, user: str, temperature: float, fndds_
     response = client.complete_json(system, user, temperature=temperature)
     if isinstance(response, dict) and response.get("status") == "need_more_info":
         requested = response.get("requested") or []
-        answers = fulfill_requests(requested, fndds_texts, off_texts)
+        answers = fulfill_requests(requested, fndds_texts, catalog_texts)
         log.info("LLM requested more info (%d item(s)) before deciding; re-asking with it included: %s", len(requested), requested)
         followup_user = (
             user
@@ -79,7 +79,7 @@ def decide_keep_drop(
     guidance: str | None,
     temperature: float,
     fndds_texts: list[Any],
-    off_texts: list[Any],
+    catalog_texts: list[Any],
 ) -> dict[str, str]:
     """Returns {attribute_name: "keep"|"drop"|"redefine"}. Any attribute the response
     doesn't mention (shouldn't happen -- the prompt asks for every one by name)
@@ -87,7 +87,7 @@ def decide_keep_drop(
     if not existing_attributes:
         return {}
     sys_p, user_p = build_keep_drop_prompt(block_name, existing_attributes, correlation_flags, evaluation, guidance)
-    response = ask_with_followup(client, sys_p, user_p, temperature, fndds_texts, off_texts)
+    response = ask_with_followup(client, sys_p, user_p, temperature, fndds_texts, catalog_texts)
     decisions: dict[str, str] = {}
     for d in response.get("decisions", []) or []:
         name, action = d.get("name"), d.get("action")
@@ -106,7 +106,7 @@ def identify_gap(
     guidance: str | None,
     temperature: float,
     fndds_texts: list[Any],
-    off_texts: list[Any],
+    catalog_texts: list[Any],
     concept_history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str | None:
     """Returns a short concept phrase for a new attribute if one's warranted, else
@@ -127,7 +127,7 @@ def identify_gap(
     if not error_examples or not (error_examples.get("false_positives") or error_examples.get("false_negatives")):
         return None
     sys_p, user_p = build_gap_identification_prompt(block_name, error_examples, existing_attributes, guidance, concept_history)
-    response = ask_with_followup(client, sys_p, user_p, temperature, fndds_texts, off_texts)
+    response = ask_with_followup(client, sys_p, user_p, temperature, fndds_texts, catalog_texts)
     if response.get("needed") and response.get("concept"):
         return str(response["concept"])
     return None
@@ -222,7 +222,7 @@ def revise_attributes(
     candidate_terms: list[dict[str, Any]] | None,
     guidance: str | None,
     fndds_texts: list[Any],
-    off_texts: list[Any],
+    catalog_texts: list[Any],
     temperature: float,
     concept_history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[list[dict[str, Any]], str, str | None]:
@@ -242,10 +242,10 @@ def revise_attributes(
     define_attributes (so a redefinition attempt sees exactly what keyword shape
     already failed for that concept, not just that it should "try something else")."""
     decisions = decide_keep_drop(
-        client, block_name, existing_attributes, correlation_flags, evaluation, guidance, temperature, fndds_texts, off_texts
+        client, block_name, existing_attributes, correlation_flags, evaluation, guidance, temperature, fndds_texts, catalog_texts
     )
     gap_concept = identify_gap(
-        client, block_name, error_examples, existing_attributes, guidance, temperature, fndds_texts, off_texts, concept_history
+        client, block_name, error_examples, existing_attributes, guidance, temperature, fndds_texts, catalog_texts, concept_history
     )
     attrs = define_attributes(
         client,

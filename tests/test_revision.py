@@ -21,8 +21,8 @@ class QueueClient:
         return self._responses.pop(0)
 
 
-ATTR_A = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]}}}
-ATTR_B = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat", "fndds_keywords": ["pork"], "off_keywords": ["pork"]}
+ATTR_A = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney"], "catalog_keywords": ["kidney"]}}}
+ATTR_B = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat", "fndds_keywords": ["pork"], "catalog_keywords": ["pork"]}
 
 
 # -- ask_with_followup -------------------------------------------------------------
@@ -144,7 +144,7 @@ def test_define_attributes_drop_omits_attribute():
 
 
 def test_define_attributes_redefine_calls_llm_for_only_that_attribute():
-    redefined = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat v2", "fndds_keywords": ["pork", "bacon"], "off_keywords": ["pork", "bacon"]}
+    redefined = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat v2", "fndds_keywords": ["pork", "bacon"], "catalog_keywords": ["pork", "bacon"]}
     client = QueueClient([{"attributes": [redefined]}])
     decisions = {"beans_bean_type": "keep", "beans_contains_meat": "redefine"}
     result = define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, None, [], None, None, None, 0.1)
@@ -156,7 +156,7 @@ def test_define_attributes_redefine_calls_llm_for_only_that_attribute():
 
 
 def test_define_attributes_new_from_gap_concept():
-    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
     client = QueueClient([{"attributes": [new_attr]}])
     decisions = {"beans_bean_type": "keep"}
     result = define_attributes(client, "beans", [ATTR_A], decisions, "contains molasses", [], None, None, None, 0.1)
@@ -165,7 +165,7 @@ def test_define_attributes_new_from_gap_concept():
 
 
 def test_define_attributes_attaches_prior_attempts_for_matching_concept():
-    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
     client = QueueClient([{"attributes": [new_attr]}])
     decisions = {"beans_bean_type": "keep"}
     concept_history = {
@@ -177,7 +177,7 @@ def test_define_attributes_attaches_prior_attempts_for_matching_concept():
 
 
 def test_define_attributes_no_prior_attempts_for_unrelated_concept():
-    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
     client = QueueClient([{"attributes": [new_attr]}])
     decisions = {"beans_bean_type": "keep"}
     concept_history = {"preparation method": [{"name": "beans_preparation", "definition": {}, "dropped_reason": "collapsed"}]}
@@ -186,7 +186,7 @@ def test_define_attributes_no_prior_attempts_for_unrelated_concept():
 
 
 def test_define_attributes_malformed_definition_filtered_out():
-    malformed = {"name": "beans_contains_meat", "kind": "boolean", "description": "broken", "fndds_keywords": [], "off_keywords": []}
+    malformed = {"name": "beans_contains_meat", "kind": "boolean", "description": "broken", "fndds_keywords": [], "catalog_keywords": []}
     client = QueueClient([{"attributes": [malformed]}])
     decisions = {"beans_contains_meat": "redefine"}
     result = define_attributes(client, "beans", [ATTR_B], decisions, None, [], None, None, None, 0.1)
@@ -198,7 +198,7 @@ def test_define_attributes_gap_concept_name_collides_with_kept_attribute_is_drop
     # came back named identically to a kept attribute (near-duplicate content, nothing
     # to do with the actual gap) and used to survive into the merged list unchecked,
     # getting silently double-trained by splink.
-    collision = {"name": "beans_contains_meat", "kind": "boolean", "description": "near-duplicate", "fndds_keywords": ["pork"], "off_keywords": ["pork"]}
+    collision = {"name": "beans_contains_meat", "kind": "boolean", "description": "near-duplicate", "fndds_keywords": ["pork"], "catalog_keywords": ["pork"]}
     client = QueueClient([{"attributes": [collision]}])
     decisions = {"beans_bean_type": "keep", "beans_contains_meat": "keep"}
     result = define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, "specific bean type", [], None, None, None, 0.1)
@@ -209,7 +209,7 @@ def test_define_attributes_gap_concept_name_collides_with_kept_attribute_is_drop
 def test_define_attributes_gap_concept_can_reuse_a_redefined_names_attribute():
     # A redefinition is allowed to keep its own name -- only a collision with a KEPT
     # (unrelated) attribute is the bug being guarded against.
-    redefined = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat v2", "fndds_keywords": ["pork", "bacon"], "off_keywords": ["pork", "bacon"]}
+    redefined = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat v2", "fndds_keywords": ["pork", "bacon"], "catalog_keywords": ["pork", "bacon"]}
     client = QueueClient([{"attributes": [redefined]}])
     decisions = {"beans_bean_type": "keep", "beans_contains_meat": "redefine"}
     result = define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, None, [], None, None, None, 0.1)
@@ -218,8 +218,8 @@ def test_define_attributes_gap_concept_can_reuse_a_redefined_names_attribute():
 
 
 def test_define_attributes_llm_duplicate_definitions_keeps_first():
-    dup1 = {"name": "beans_has_molasses", "kind": "boolean", "description": "first", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
-    dup2 = {"name": "beans_has_molasses", "kind": "boolean", "description": "second", "fndds_keywords": ["treacle"], "off_keywords": ["treacle"]}
+    dup1 = {"name": "beans_has_molasses", "kind": "boolean", "description": "first", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
+    dup2 = {"name": "beans_has_molasses", "kind": "boolean", "description": "second", "fndds_keywords": ["treacle"], "catalog_keywords": ["treacle"]}
     client = QueueClient([{"attributes": [dup1, dup2]}])
     decisions = {"beans_bean_type": "keep"}
     result = define_attributes(client, "beans", [ATTR_A], decisions, "sweetener", [], None, None, None, 0.1)
@@ -228,7 +228,7 @@ def test_define_attributes_llm_duplicate_definitions_keeps_first():
 
 
 def test_define_attributes_passes_existing_names_to_prompt():
-    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
     client = QueueClient([{"attributes": [new_attr]}])
     decisions = {"beans_bean_type": "keep"}
     define_attributes(client, "beans", [ATTR_A, ATTR_B], decisions, "contains molasses", [], None, None, None, 0.1)
@@ -239,7 +239,7 @@ def test_define_attributes_passes_existing_names_to_prompt():
 
 
 def test_revise_attributes_full_flow_keep_and_new():
-    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "off_keywords": ["molasses"]}
+    new_attr = {"name": "beans_has_molasses", "kind": "boolean", "description": "molasses", "fndds_keywords": ["molasses"], "catalog_keywords": ["molasses"]}
     client = QueueClient(
         [
             {"decisions": [{"name": "beans_bean_type", "action": "keep"}]},  # stage 1
@@ -260,7 +260,7 @@ def test_revise_attributes_full_flow_keep_and_new():
         candidate_terms=None,
         guidance=None,
         fndds_texts=[],
-        off_texts=[],
+        catalog_texts=[],
         temperature=0.1,
     )
     assert ATTR_A in attrs
@@ -288,7 +288,7 @@ def test_revise_attributes_no_op_rationale_when_nothing_changes():
         candidate_terms=None,
         guidance=None,
         fndds_texts=[],
-        off_texts=[],
+        catalog_texts=[],
         temperature=0.1,
     )
     assert attrs == [ATTR_A]

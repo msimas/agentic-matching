@@ -39,15 +39,15 @@ def _dfs():
 
 
 def test_finds_meaningful_split_term():
-    fndds_df, off_df = _dfs()
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans")
+    fndds_df, catalog_df = _dfs()
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans")
     names = {t["term"] for t in terms}
     assert "meat" in names
 
 
 def test_excludes_canonical_block_term():
-    fndds_df, off_df = _dfs()
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans")
+    fndds_df, catalog_df = _dfs()
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans")
     names = {t["term"] for t in terms}
     assert "beans" not in names
     assert "bean" not in names
@@ -57,15 +57,15 @@ def test_excludes_near_universal_term():
     # "plain" appears in 5/10 fndds rows -- within band -- but let's check a term at
     # the edges: nothing here is >90%, so just confirm canonical exclusion holds even
     # though "beans" is literally 100% on both sides (would otherwise pass the band).
-    fndds_df, off_df = _dfs()
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans", max_frac=0.99)
+    fndds_df, catalog_df = _dfs()
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans", max_frac=0.99)
     names = {t["term"] for t in terms}
     assert "beans" not in names
 
 
 def test_excludes_rare_below_band():
-    fndds_df, off_df = _dfs()
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans", min_frac=0.15)
+    fndds_df, catalog_df = _dfs()
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans", min_frac=0.15)
     names = {t["term"] for t in terms}
     assert "rare" not in names  # only 1/10 fndds rows, 0/10 off rows
 
@@ -76,20 +76,20 @@ def test_ranks_mutual_signal_above_one_sided_noise():
     fndds = FNDDS_DESCRIPTIONS + ["Beans, sandwich, onesided"] * 4
     off = OFF_SEARCH_TEXT + ["beans plain navy"] * 4  # no "onesided" on the off side
     fndds_df = pd.DataFrame({"description": fndds})
-    off_df = pd.DataFrame({"search_text": off})
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans")
+    catalog_df = pd.DataFrame({"search_text": off})
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans")
     order = [t["term"] for t in terms]
     assert order.index("meat") < order.index("onesided")
 
 
 def test_result_capped_at_k():
-    fndds_df, off_df = _dfs()
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans", k=2)
+    fndds_df, catalog_df = _dfs()
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans", k=2)
     assert len(terms) <= 2
 
 
 def test_handles_missing_values():
     fndds_df = pd.DataFrame({"description": FNDDS_DESCRIPTIONS + [None, float("nan")]})
-    off_df = pd.DataFrame({"search_text": OFF_SEARCH_TEXT + [None, float("nan")]})
-    terms = _candidate_boolean_terms(fndds_df, off_df, "beans")
+    catalog_df = pd.DataFrame({"search_text": OFF_SEARCH_TEXT + [None, float("nan")]})
+    terms = _candidate_boolean_terms(fndds_df, catalog_df, "beans")
     assert isinstance(terms, list)

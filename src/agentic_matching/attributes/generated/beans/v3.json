@@ -1,167 +1,160 @@
 [
   {
-    "name": "beans_bean_type",
+    "name": "bean_type",
     "kind": "categorical",
-    "description": "The specific type of bean involved.",
+    "description": "Variety of bean",
     "categories": {
-      "green": {
-        "fndds_keywords": [
-          "green",
-          "string beans"
-        ],
-        "off_keywords": [
-          "green",
-          "haricots verts",
-          "petit pois"
-        ]
-      },
       "black": {
         "fndds_keywords": [
-          "black"
+          "black bean"
         ],
-        "off_keywords": [
-          "black"
-        ]
-      },
-      "kidney": {
-        "fndds_keywords": [
-          "kidney"
-        ],
-        "off_keywords": [
-          "kidney"
+        "catalog_keywords": [
+          "black bean",
+          "haricot noir"
         ]
       },
       "pinto": {
         "fndds_keywords": [
           "pinto"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "pinto"
+        ]
+      },
+      "kidney": {
+        "fndds_keywords": [
+          "kidney"
+        ],
+        "catalog_keywords": [
+          "kidney"
+        ]
+      },
+      "navy": {
+        "fndds_keywords": [
+          "navy bean",
+          "white bean"
+        ],
+        "catalog_keywords": [
+          "navy bean",
+          "white bean"
+        ]
+      },
+      "garbanzo": {
+        "fndds_keywords": [
+          "garbanzo",
+          "chickpea"
+        ],
+        "catalog_keywords": [
+          "garbanzo",
+          "chickpea",
+          "pois chiche"
         ]
       },
       "lima": {
         "fndds_keywords": [
           "lima"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "lima"
         ]
       },
-      "chickpea": {
+      "refried": {
         "fndds_keywords": [
-          "chickpeas"
+          "refried"
         ],
-        "off_keywords": [
-          "chickpea",
-          "garbanzo"
-        ]
-      },
-      "soy": {
-        "fndds_keywords": [
-          "soy",
-          "soybeans"
-        ],
-        "off_keywords": [
-          "soy"
+        "catalog_keywords": [
+          "refried",
+          "refritos"
         ]
       },
       "lentil": {
         "fndds_keywords": [
-          "lentils"
-        ],
-        "off_keywords": [
           "lentil"
-        ]
-      },
-      "navy": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "navy"
-        ]
-      },
-      "white": {
-        "fndds_keywords": [
-          "white"
         ],
-        "off_keywords": [
-          "white",
-          "alubias blancas"
+        "catalog_keywords": [
+          "lentil",
+          "lentille"
         ]
       }
     }
   },
   {
-    "name": "beans_preparation_method",
+    "name": "sodium_level",
     "kind": "categorical",
-    "description": "How the beans are prepared (canned, dried, frozen, etc.).",
+    "description": "Sodium content tier",
     "categories": {
-      "canned": {
+      "low_sodium": {
         "fndds_keywords": [
-          "canned"
+          "low sodium",
+          "no salt",
+          "reduced sodium"
         ],
-        "off_keywords": [
-          "canned"
+        "catalog_keywords": [
+          "low sodium",
+          "no salt",
+          "reduced sodium",
+          "sans sel"
         ]
       },
-      "dried": {
-        "fndds_keywords": [
-          "dried"
-        ],
-        "off_keywords": [
-          "dried"
-        ]
-      },
-      "frozen": {
-        "fndds_keywords": [
-          "frozen"
-        ],
-        "off_keywords": [
-          "frozen"
-        ]
-      },
-      "other": {
+      "regular": {
         "fndds_keywords": [],
-        "off_keywords": []
+        "catalog_keywords": []
       }
     }
   },
   {
-    "name": "beans_contains_meat",
+    "name": "has_common",
     "kind": "boolean",
-    "description": "Indicates if the product contains meat (pork, chicken, beef, etc.).",
+    "description": "Does the text mention 'common'?",
     "fndds_keywords": [
-      "meat"
+      "common"
     ],
-    "off_keywords": [
-      "pork",
-      "bacon",
-      "ham",
-      "sausage",
-      "frankfurter",
-      "beef",
-      "chicken"
+    "catalog_keywords": [
+      "common"
     ]
   },
   {
-    "name": "beans_is_burrito_ingredient",
+    "name": "has_canned",
     "kind": "boolean",
-    "description": "Indicates if the product is described as an ingredient in a burrito.",
+    "description": "Does the text mention 'canned'?",
     "fndds_keywords": [
-      "burrito"
+      "canned"
     ],
-    "off_keywords": [
-      "burrito"
+    "catalog_keywords": [
+      "canned"
     ]
   },
   {
-    "name": "beans_is_taco_ingredient",
+    "name": "has_legume",
     "kind": "boolean",
-    "description": "Indicates if the product is described as an ingredient in a taco.",
+    "description": "Does the text mention 'legume'?",
     "fndds_keywords": [
-      "taco"
+      "legume"
     ],
-    "off_keywords": [
-      "taco"
+    "catalog_keywords": [
+      "legume"
+    ]
+  },
+  {
+    "name": "has_seeds",
+    "kind": "boolean",
+    "description": "Does the text mention 'seeds'?",
+    "fndds_keywords": [
+      "seeds"
+    ],
+    "catalog_keywords": [
+      "seeds"
+    ]
+  },
+  {
+    "name": "has_vegetables",
+    "kind": "boolean",
+    "description": "Does the text mention 'vegetables'?",
+    "fndds_keywords": [
+      "vegetables"
+    ],
+    "catalog_keywords": [
+      "vegetables"
     ]
   }
 ]

@@ -9,6 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agentic_matching.catalog_source import ACTIVE_CATALOG_SOURCE
+
+# The pluggable "second side"'s human-readable name, interpolated into every
+# LLM-facing prompt below instead of a hardcoded "Open Food Facts (OFF)" -- swapping
+# ACTIVE_CATALOG_SOURCE (see catalog_source.py) changes what the LLM is told it's
+# linking FNDDS against, with no prompt-text edits required.
+_CATALOG_DISPLAY_NAME = ACTIVE_CATALOG_SOURCE.display_name
+
 
 def _round_floats(obj: Any, ndigits: int = 4) -> Any:
     """Recursively rounds every float in a payload to `ndigits` decimal places before
@@ -38,7 +46,7 @@ def _summarize_attributes(attrs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     whether to keep/drop/redefine an attribute or whether a new one is needed, not
     prompts that write or judge its actual keyword content. A categorical attribute
     like a real bean_type can carry a dozen categories' worth of fndds_keywords/
-    off_keywords; none of that bulk helps a keep/drop or gap-need judgment (that's
+    catalog_keywords; none of that bulk helps a keep/drop or gap-need judgment (that's
     what attribute_discriminative_power/error_examples are for), it just adds tokens
     and risks the model nitpicking specific keywords instead of the decision it's
     actually being asked for. build_definition_prompt is unaffected -- it never
@@ -62,12 +70,12 @@ You are a subject-matter-expert-in-the-loop assistant helping construct record-l
 blocking rules between USDA FoodData Central FNDDS records and Open Food Facts (OFF) \
 records, for a single product category ("block").
 
-A blocking rule for a side (fndds or off) is a boolean predicate over that side's data:
+A blocking rule for a side (fndds or catalog) is a boolean predicate over that side's data:
   - "keywords": lowercase substrings; a record is IN the block if its raw \
     description/product-name text contains ANY of them. Tested against the record's \
     own name/description ONLY, never category or annotation text.
   - "categories": exact category values (see "category_options" below) -- a record is \
-    IN the block if its category field equals (fndds) or contains (off) any of them. \
+    IN the block if its category field equals (fndds) or contains (catalog) any of them. \
     Prefer this over keywords whenever a clearly on-topic category exists: FNDDS's \
     WWEIA food category and OFF's categories_tags are clean, human-curated labels, far \
     more precise than a keyword guess.
@@ -122,16 +130,16 @@ with ONLY a JSON object of this shape:
 
 {
   "fndds": {"keywords": [...], "categories": [...], "exclude_keywords": [...]},
-  "off": {"keywords": [...], "categories": [...], "exclude_keywords": [...]},
+  "catalog": {"keywords": [...], "categories": [...], "exclude_keywords": [...]},
   "rationale": "one or two sentences"
 }
-"""
+""".replace("Open Food Facts (OFF)", _CATALOG_DISPLAY_NAME)
 
 
 def build_blocking_prompt(
     block_name: str,
     fndds_samples: list[str],
-    off_samples: list[str],
+    catalog_samples: list[str],
     previous_rule: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
     corpus_stats: dict[str, Any] | None = None,
@@ -142,7 +150,7 @@ def build_blocking_prompt(
     payload = {
         "block_name": block_name,
         "fndds_sample_descriptions": fndds_samples[:40],
-        "off_sample_product_names": off_samples[:40],
+        "catalog_sample_product_names": catalog_samples[:40],
     }
     if notes:
         # Freeform domain guidance from blocking/seed_rules.py -- not a structured
@@ -254,21 +262,21 @@ above, not copied from this template):
       "kind": "boolean",
       "description": "(placeholder -- replace with a real boolean attribute for the actual block above)",
       "fndds_keywords": ["<a term from THIS block's own samples>"],
-      "off_keywords": ["<a term from THIS block's own samples>"]
+      "catalog_keywords": ["<a term from THIS block's own samples>"]
     },
     {
       "name": "example_size_tier",
       "kind": "categorical",
       "description": "(placeholder -- replace with a real categorical attribute for the actual block above)",
       "categories": {
-        "example_small": {"fndds_keywords": ["<...>"], "off_keywords": ["<...>"]},
-        "example_large":  {"fndds_keywords": ["<...>"], "off_keywords": ["<...>"]}
+        "example_small": {"fndds_keywords": ["<...>"], "catalog_keywords": ["<...>"]},
+        "example_large":  {"fndds_keywords": ["<...>"], "catalog_keywords": ["<...>"]}
       }
     }
   ],
   "rationale": "one or two sentences"
 }
-"""
+""".replace("Open Food Facts (OFF)", _CATALOG_DISPLAY_NAME)
 
 
 def build_attribute_prompt(
@@ -333,7 +341,7 @@ be given the answer and asked again:
 }
 "term_frequency" returns how often a term occurs on each side of this block.
 "sample_records" returns a few real fndds descriptions or off product names (pick \
-"side": "fndds" or "off") containing that term. Request at most 3 items total, and \
+"side": "fndds" or "catalog") containing that term. Request at most 3 items total, and \
 only ones a normal decision would plausibly turn on -- this costs an extra round trip, \
 so don't use it out of habit."""
 
@@ -395,7 +403,9 @@ Reply with ONLY a JSON object:
     {"name": "<existing attribute name>", "action": "redefine", "reason": "why its current keywords/categories aren't working"}
   ]
 }
-Include EVERY attribute in existing_attributes exactly once, in any order."""
+Include EVERY attribute in existing_attributes exactly once, in any order.""".replace(
+        "Open Food Facts (OFF)", _CATALOG_DISPLAY_NAME
+    )
     + _NEED_MORE_INFO_NOTE
 )
 
@@ -531,13 +541,15 @@ Reply with ONLY a JSON object:
       "kind": "boolean",
       "description": "...",
       "fndds_keywords": ["..."],
-      "off_keywords": ["..."]
+      "catalog_keywords": ["..."]
     }
   ]
 }
-(a categorical attribute instead uses "categories": {"<category>": {"fndds_keywords": [...], "off_keywords": [...]}, ...} \
-in place of fndds_keywords/off_keywords, same as elsewhere in this project.)
-Output exactly one attribute per "to_define" entry, in the same order."""
+(a categorical attribute instead uses "categories": {"<category>": {"fndds_keywords": [...], "catalog_keywords": [...]}, ...} \
+in place of fndds_keywords/catalog_keywords, same as elsewhere in this project.)
+Output exactly one attribute per "to_define" entry, in the same order.""".replace(
+    "Open Food Facts (OFF)", _CATALOG_DISPLAY_NAME
+)
 
 
 def build_definition_prompt(

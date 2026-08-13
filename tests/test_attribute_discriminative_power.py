@@ -16,7 +16,7 @@ def _frames():
             {"unique_id": "f3", "vegetable_type": "cauliflower", "is_frozen": "False"},
         ]
     )
-    off_df = pd.DataFrame(
+    catalog_df = pd.DataFrame(
         [
             {"unique_id": "o1", "vegetable_type": "onion", "is_frozen": "False"},  # true match for f1
             {"unique_id": "o2", "vegetable_type": "broccoli", "is_frozen": "False"},  # true match for f2
@@ -27,28 +27,28 @@ def _frames():
         ]
     )
     true_labels = {"f1": "o1", "f2": "o2", "f3": "o3"}
-    return fndds_df, off_df, true_labels
+    return fndds_df, catalog_df, true_labels
 
 
 def test_discriminating_attribute_scores_high_on_true_low_on_decoy():
-    fndds_df, off_df, true_labels = _frames()
-    result = _attribute_discriminative_power(fndds_df, off_df, true_labels, ATTRS, n_decoys_per_positive=5, seed=1)
+    fndds_df, catalog_df, true_labels = _frames()
+    result = _attribute_discriminative_power(fndds_df, catalog_df, true_labels, ATTRS, n_decoys_per_positive=5, seed=1)
     veg = next(r for r in result if r["attribute"] == "vegetable_type")
     assert veg["agreement_rate_true_pairs"] == 1.0
     assert veg["agreement_rate_decoy_pairs"] < 1.0
 
 
 def test_non_discriminating_attribute_scores_similarly_on_both():
-    fndds_df, off_df, true_labels = _frames()
-    result = _attribute_discriminative_power(fndds_df, off_df, true_labels, ATTRS, n_decoys_per_positive=5, seed=1)
+    fndds_df, catalog_df, true_labels = _frames()
+    result = _attribute_discriminative_power(fndds_df, catalog_df, true_labels, ATTRS, n_decoys_per_positive=5, seed=1)
     frozen = next(r for r in result if r["attribute"] == "is_frozen")
     assert frozen["agreement_rate_true_pairs"] == 1.0
     assert frozen["agreement_rate_decoy_pairs"] == 1.0
 
 
 def test_empty_true_labels_returns_empty_list():
-    fndds_df, off_df, _ = _frames()
-    assert _attribute_discriminative_power(fndds_df, off_df, {}, ATTRS) == []
+    fndds_df, catalog_df, _ = _frames()
+    assert _attribute_discriminative_power(fndds_df, catalog_df, {}, ATTRS) == []
 
 
 def test_empty_frames_returns_empty_list():
@@ -57,6 +57,6 @@ def test_empty_frames_returns_empty_list():
 
 
 def test_unknown_attribute_name_skipped_not_errored():
-    fndds_df, off_df, true_labels = _frames()
+    fndds_df, catalog_df, true_labels = _frames()
     attrs = [{"name": "does_not_exist", "kind": "boolean"}]
-    assert _attribute_discriminative_power(fndds_df, off_df, true_labels, attrs) == []
+    assert _attribute_discriminative_power(fndds_df, catalog_df, true_labels, attrs) == []

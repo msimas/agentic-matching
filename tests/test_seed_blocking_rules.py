@@ -1,10 +1,10 @@
 import duckdb
 
-from agentic_matching.blocking.rules import fndds_predicate_sql, off_predicate_sql
+from agentic_matching.blocking.rules import fndds_predicate_sql, catalog_predicate_sql
 
 YOGURT_RULE = {
     "fndds": {"keywords": ["yogurt", "yoghurt"], "exclude_keywords": ["frozen yogurt"]},
-    "off": {"keywords": ["yogurt", "yoghurt", "yogourt"], "exclude_keywords": []},
+    "catalog": {"keywords": ["yogurt", "yoghurt", "yogourt"], "exclude_keywords": []},
 }
 
 
@@ -12,7 +12,7 @@ def _member(rule: dict, side: str, text: str) -> bool:
     con = duckdb.connect()
     text_col = "description" if side == "fndds" else "search_text"
     predicate = (
-        fndds_predicate_sql(rule, category_col=None) if side == "fndds" else off_predicate_sql(rule, category_col=None)
+        fndds_predicate_sql(rule, category_col=None) if side == "fndds" else catalog_predicate_sql(rule, category_col=None)
     )
     row = con.execute(f"SELECT {predicate} FROM (SELECT lower(?) AS {text_col})", [text]).fetchone()
     con.close()
@@ -31,16 +31,16 @@ def test_fndds_exclude_keyword_overrides_include():
     assert not _member(YOGURT_RULE, "fndds", "Frozen yogurt, chocolate")
 
 
-def test_off_keyword_match_alt_spelling():
-    assert _member(YOGURT_RULE, "off", "Yoghurt nature")
+def test_catalog_keyword_match_alt_spelling():
+    assert _member(YOGURT_RULE, "catalog", "Yoghurt nature")
 
 
-def test_off_no_match_unrelated():
-    assert not _member(YOGURT_RULE, "off", "Whole wheat bread")
+def test_catalog_no_match_unrelated():
+    assert not _member(YOGURT_RULE, "catalog", "Whole wheat bread")
 
 
 def test_empty_keywords_matches_nothing():
-    empty_rule = {"fndds": {"keywords": [], "exclude_keywords": []}, "off": {"keywords": [], "exclude_keywords": []}}
+    empty_rule = {"fndds": {"keywords": [], "exclude_keywords": []}, "catalog": {"keywords": [], "exclude_keywords": []}}
     assert not _member(empty_rule, "fndds", "Yogurt, plain")
 
 
@@ -56,7 +56,7 @@ def _category_member(rule: dict, side: str, category_value, text: str = "") -> b
             [text, category_value],
         ).fetchone()
     else:
-        predicate = off_predicate_sql(rule, text_col="search_text", category_col="categories_tags")
+        predicate = catalog_predicate_sql(rule, text_col="search_text", category_col="categories_tags")
         row = con.execute(
             f"SELECT {predicate} FROM (SELECT lower(?) AS search_text, ? AS categories_tags)",
             [text, category_value],
@@ -80,14 +80,14 @@ def test_fndds_category_case_insensitive():
     assert _category_member(rule, "fndds", "yogurt, regular")
 
 
-def test_off_category_array_contains():
-    rule = {"off": {"keywords": [], "categories": ["en:yogurts"]}}
-    assert _category_member(rule, "off", ["en:dairies", "en:yogurts"])
+def test_catalog_category_array_contains():
+    rule = {"catalog": {"keywords": [], "categories": ["en:yogurts"]}}
+    assert _category_member(rule, "catalog", ["en:dairies", "en:yogurts"])
 
 
-def test_off_category_no_match():
-    rule = {"off": {"keywords": [], "categories": ["en:yogurts"]}}
-    assert not _category_member(rule, "off", ["en:snacks", "en:sweet-snacks"])
+def test_catalog_category_no_match():
+    rule = {"catalog": {"keywords": [], "categories": ["en:yogurts"]}}
+    assert not _category_member(rule, "catalog", ["en:snacks", "en:sweet-snacks"])
 
 
 def test_category_and_keyword_both_required():
@@ -108,8 +108,8 @@ def test_missing_category_value_excludes_despite_keyword_match():
     # README's "Known constraints") can never satisfy the category clause, so once a
     # rule specifies categories, such a record is excluded even if its text is an
     # unambiguous keyword match.
-    rule = {"off": {"keywords": ["bean"], "categories": ["en:canned-common-beans"]}}
-    assert not _category_member(rule, "off", None, text="Cannellini beans")
+    rule = {"catalog": {"keywords": ["bean"], "categories": ["en:canned-common-beans"]}}
+    assert not _category_member(rule, "catalog", None, text="Cannellini beans")
 
 
 def test_exclude_keyword_overrides_category_match():
@@ -145,9 +145,9 @@ def test_never_useful_keyword_does_not_falsely_match_unrelated_text():
     assert not _member(rule, "fndds", "Chicken with gravy")
 
 
-def test_off_side_also_sanitizes_never_useful_keywords():
-    rule = {"off": {"keywords": ["yogurt", "with"]}}
-    predicate = off_predicate_sql(rule, category_col=None)
+def test_catalog_side_also_sanitizes_never_useful_keywords():
+    rule = {"catalog": {"keywords": ["yogurt", "with"]}}
+    predicate = catalog_predicate_sql(rule, category_col=None)
     assert "with" not in predicate
 
 
@@ -169,7 +169,7 @@ def _raw_member(rule: dict, side: str, text: str) -> bool:
     con = duckdb.connect()
     text_col = "description" if side == "fndds" else "search_text"
     predicate = (
-        fndds_predicate_sql(rule, category_col=None) if side == "fndds" else off_predicate_sql(rule, category_col=None)
+        fndds_predicate_sql(rule, category_col=None) if side == "fndds" else catalog_predicate_sql(rule, category_col=None)
     )
     row = con.execute(f"SELECT {predicate} FROM (SELECT ? AS {text_col})", [text]).fetchone()  # NOT lower()'d
     con.close()
@@ -190,9 +190,9 @@ def test_fndds_keyword_matches_when_match_is_at_the_very_start():
     assert _raw_member(rule, "fndds", "Sweet potato fries, NFS")
 
 
-def test_off_keyword_matches_mixed_case_text_without_caller_lowering():
-    rule = {"off": {"keywords": ["yogurt"]}}
-    assert _raw_member(rule, "off", "Chobani Greek Yogurt, Plain")
+def test_catalog_keyword_matches_mixed_case_text_without_caller_lowering():
+    rule = {"catalog": {"keywords": ["yogurt"]}}
+    assert _raw_member(rule, "catalog", "Chobani Greek Yogurt, Plain")
 
 
 def test_exclude_keyword_matches_mixed_case_text_without_caller_lowering():

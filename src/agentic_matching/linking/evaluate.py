@@ -4,7 +4,7 @@ FNDDS<->OFF has no direct ground truth (FNDDS has no UPC), so two different repo
 produced:
 
 1. Proxy precision/recall/F1 against the Branded<->OFF calibration holdout: the
-   holdout's known-true (Branded fdc_id, off_code) pairs, restricted to this block, are
+   holdout's known-true (Branded fdc_id, catalog_code) pairs, restricted to this block, are
    scored using the block's *already-trained* comparison weights (same attribute
    definitions applied to Branded's text fields as the FNDDS-side stand-in -- see
    calibration.py's documented design), mixed with sampled non-match decoys so
@@ -29,6 +29,7 @@ from agentic_matching.attributes.rules import compute_attribute_values
 from agentic_matching.blocking.metrics import combined_exclude_keywords, exclude_predicate_sql, term_predicate_sql
 from agentic_matching.blocking.seed_rules import get_seed_rule
 from agentic_matching.config import CALIBRATION_DIR
+from agentic_matching.linking import splink_model
 from agentic_matching.linking.splink_model import stringify
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ log = logging.getLogger(__name__)
 
 def _load_block_holdout(block_name: str) -> pd.DataFrame:
     branded_term_pred = term_predicate_sql("lower(coalesce(branded_food_category, ''))", block_name)
-    off_term_pred = term_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", block_name)
+    catalog_term_pred = term_predicate_sql("lower(array_to_string(catalog_categories_tags, ' '))", block_name)
     # Same false-positive-category problem as metrics.pair_completeness (see its
     # docstring comment for the verified "onion ring" -> "French Fries, Potatoes &
     # Onion Rings" case) -- applied here too so the linking holdout doesn't score
@@ -73,27 +74,27 @@ def _load_block_holdout(block_name: str) -> pd.DataFrame:
     seed_rule = get_seed_rule(block_name) or {}
     excludes = combined_exclude_keywords(seed_rule)
     branded_exclude_pred = exclude_predicate_sql("lower(coalesce(branded_food_category, ''))", excludes)
-    off_exclude_pred = exclude_predicate_sql("lower(array_to_string(off_categories_tags, ' '))", excludes)
+    catalog_exclude_pred = exclude_predicate_sql("lower(array_to_string(catalog_categories_tags, ' '))", excludes)
     holdout_path = str(CALIBRATION_DIR / "holdout.parquet").replace("'", "''")
     con = duckdb.connect()
     df = con.execute(
         f"""
-        SELECT fdc_id, off_code, fndds_style_description, branded_food_category,
-               off_product_name, off_categories_tags
+        SELECT fdc_id, catalog_code, fndds_style_description, branded_food_category,
+               catalog_product_name, catalog_categories_tags
         FROM read_parquet('{holdout_path}')
-        WHERE ({branded_term_pred} OR {off_term_pred})
-          AND NOT ({branded_exclude_pred} OR {off_exclude_pred})
+        WHERE ({branded_term_pred} OR {catalog_term_pred})
+          AND NOT ({branded_exclude_pred} OR {catalog_exclude_pred})
         """
     ).df()
     con.close()
     return df
 
 
-def _off_block_pool(block_name: str, limit: int = 20000) -> pd.DataFrame:
+def _catalog_block_pool(block_name: str, limit: int = 20000) -> pd.DataFrame:
     """A pool of OFF records from this block to draw negative-pair decoys from."""
     from agentic_matching.config import BLOCKS_DIR
 
-    return pd.read_parquet(BLOCKS_DIR / f"{block_name}_off.parquet").head(limit)
+    return pd.read_parquet(BLOCKS_DIR / f"{block_name}_catalog.parquet").head(limit)
 
 
 def build_eval_frames(
@@ -103,7 +104,7 @@ def build_eval_frames(
     seed: int = 7,
     max_holdout_positives: int = 500,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
-    """Returns (fndds_side_df, off_side_df, true_labels) where true_labels maps
+    """Returns (fndds_side_df, catalog_side_df, true_labels) where true_labels maps
     fndds unique_id -> the true off unique_id (only for positives).
 
     `score_against_holdout` scores this pair of frames with an exhaustive ("1=1")
@@ -117,7 +118,7 @@ def build_eval_frames(
     holdout = _load_block_holdout(block_name)
     if len(holdout) > max_holdout_positives:
         holdout = holdout.sample(n=max_holdout_positives, random_state=seed).reset_index(drop=True)
-    off_pool = _off_block_pool(block_name)
+    catalog_pool = _catalog_block_pool(block_name)
 
     fndds_vals = compute_attribute_values(attrs, holdout["fndds_style_description"].tolist(), side="fndds")
     fndds_df = pd.DataFrame(
@@ -129,34 +130,34 @@ def build_eval_frames(
         }
     )
 
-    true_off_codes = set(holdout["off_code"].astype(str))
-    decoy_pool = off_pool[~off_pool["code"].astype(str).isin(true_off_codes)]
+    true_catalog_codes = set(holdout["catalog_code"].astype(str))
+    decoy_pool = catalog_pool[~catalog_pool["code"].astype(str).isin(true_catalog_codes)]
     n_decoys = min(len(decoy_pool), n_decoys_per_positive * max(len(holdout), 1))
     decoys = decoy_pool.sample(n=n_decoys, random_state=seed) if n_decoys > 0 else decoy_pool.iloc[:0]
 
-    positives_off = pd.DataFrame(
+    positives_catalog = pd.DataFrame(
         {
-            "code": holdout["off_code"].astype(str),
-            "product_name": holdout["off_product_name"],
-            "search_text": holdout["off_product_name"].fillna("").str.lower(),
+            "code": holdout["catalog_code"].astype(str),
+            "product_name": holdout["catalog_product_name"],
+            "search_text": holdout["catalog_product_name"].fillna("").str.lower(),
         }
     )
-    off_side = pd.concat(
-        [positives_off, decoys[["code", "product_name", "search_text"]]], ignore_index=True
+    catalog_side = pd.concat(
+        [positives_catalog, decoys[["code", "product_name", "search_text"]]], ignore_index=True
     ).drop_duplicates(subset="code")
 
-    off_vals = compute_attribute_values(attrs, off_side["search_text"].tolist(), side="off")
-    off_df = pd.DataFrame(
+    catalog_vals = compute_attribute_values(attrs, catalog_side["search_text"].tolist(), side="catalog")
+    catalog_df = pd.DataFrame(
         {
-            "unique_id": off_side["code"].astype(str),
-            "description": off_side["product_name"],
-            "search_text": off_side["search_text"],
-            **{name: [stringify(v) for v in vals] for name, vals in off_vals.items()},
+            "unique_id": catalog_side["code"].astype(str),
+            "description": catalog_side["product_name"],
+            "search_text": catalog_side["search_text"],
+            **{name: [stringify(v) for v in vals] for name, vals in catalog_vals.items()},
         }
     )
 
-    true_labels = dict(zip(holdout["fdc_id"].astype(str), holdout["off_code"].astype(str)))
-    return fndds_df, off_df, true_labels
+    true_labels = dict(zip(holdout["fdc_id"].astype(str), holdout["catalog_code"].astype(str)))
+    return fndds_df, catalog_df, true_labels
 
 
 def _build_holdout_predictions(
@@ -167,34 +168,38 @@ def _build_holdout_predictions(
     (the trained model's comparison weights, scored on the small, capped holdout
     sample -- see build_eval_frames' docstring for why "1=1" blocking is safe only
     here). Split out so both consumers pay for this once each, not twice."""
-    fndds_df, off_df, true_labels = build_eval_frames(block_name, attrs)
-    if fndds_df.empty or off_df.empty:
-        return fndds_df, off_df, true_labels, None
+    fndds_df, catalog_df, true_labels = build_eval_frames(block_name, attrs)
+    if fndds_df.empty or catalog_df.empty:
+        return fndds_df, catalog_df, true_labels, None
 
     eval_settings = dict(trained_settings)
     eval_settings["blocking_rules_to_generate_predictions"] = ["1=1"]  # eval sets are small; exhaustive is fine
 
-    linker = Linker([fndds_df, off_df], eval_settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "off"])
+    linker = Linker([fndds_df, catalog_df], eval_settings, db_api=DuckDBAPI(), input_table_aliases=["fndds", "catalog"])
     preds = linker.inference.predict(threshold_match_probability=0.0).as_pandas_dataframe()
-    return fndds_df, off_df, true_labels, preds
+    # See splink_model.normalize_prediction_sides' docstring -- splink assigns _l/_r by
+    # alphabetical table-name order, not input order, so this call is required to keep
+    # every consumer below's "unique_id_r is always the catalog side" assumption true.
+    preds = splink_model.normalize_prediction_sides(preds)
+    return fndds_df, catalog_df, true_labels, preds
 
 
 def _normalize_text(value: Any) -> str:
     return str(value).strip().lower() if value not in (None, "") else ""
 
 
-def _off_to_true_fndds(true_labels: dict[str, str]) -> dict[str, set[str]]:
-    """Reverses true_labels (fdc_id -> its one true off_code) into off_code -> the set
+def _catalog_to_true_fndds(true_labels: dict[str, str]) -> dict[str, set[str]]:
+    """Reverses true_labels (fdc_id -> its one true catalog_code) into catalog_code -> the set
     of fdc_id(s) genuinely known to be correct for it. A set, not a single id, because
     the holdout data itself sometimes labels more than one fdc_id as correct for the
-    same off_code -- verified real case on the beans holdout: off_code
+    same catalog_code -- verified real case on the beans holdout: catalog_code
     0072036980786 is the labeled true partner for 5 different fdc_ids. Any one of them
     is an acceptable "correct" answer once we're picking one fndds match per OFF item
     (see score_against_holdout) -- not just whichever happened to be sampled first."""
-    off_to_fndds: dict[str, set[str]] = {}
-    for fndds_id, off_id in true_labels.items():
-        off_to_fndds.setdefault(off_id, set()).add(fndds_id)
-    return off_to_fndds
+    catalog_to_fndds: dict[str, set[str]] = {}
+    for fndds_id, catalog_id in true_labels.items():
+        catalog_to_fndds.setdefault(catalog_id, set()).add(fndds_id)
+    return catalog_to_fndds
 
 
 def _resolvable_ceiling(true_partners: dict[str, set[str]], fndds_desc_by_id: dict[str, str]) -> dict[str, Any]:
@@ -254,16 +259,16 @@ def _category_level_score(
     (case/whitespace-insensitive), not only when the predicted id is the literal gold
     fdc_id.
 
-    `predicted` maps off_id -> the single fndds_id chosen as its best match (the same
+    `predicted` maps catalog_id -> the single fndds_id chosen as its best match (the same
     selection production actually ships -- see score_against_holdout). `true_partners`
-    maps off_id -> the set of fdc_id(s) genuinely known correct for it (see
-    _off_to_true_fndds).
+    maps catalog_id -> the set of fdc_id(s) genuinely known correct for it (see
+    _catalog_to_true_fndds).
 
     Exists because the exact-id gold pairs are far stricter than what this pipeline
     can, or needs to, resolve. Verified on the beans holdout: 94% of true pairs
     (12,045/12,767) share their FNDDS-side description text with at least one OTHER
     true pair -- e.g. "BLACK BEANS" is the gold description for 281 different
-    (fdc_id, off_code) pairs. There is no text signal on either side that could
+    (fdc_id, catalog_code) pairs. There is no text signal on either side that could
     distinguish which specific fdc_id is "the" one right answer among hundreds of
     identically-worded records, and this pipeline's category-level attribute set
     (bean_type, contains_meat, ...) was never designed to resolve that level of
@@ -277,8 +282,8 @@ def _category_level_score(
     n_true = len(true_partners)
     n_pred = len(predicted)
     n_correct = 0
-    for off_id, predicted_fndds_id in predicted.items():
-        true_ids = true_partners.get(off_id)
+    for catalog_id, predicted_fndds_id in predicted.items():
+        true_ids = true_partners.get(catalog_id)
         if not true_ids:
             continue
         if predicted_fndds_id in true_ids:
@@ -306,7 +311,7 @@ def score_against_holdout(
     block_name: str, attrs: list[dict[str, Any]], trained_settings: dict[str, Any], threshold: float = 0.5
 ) -> dict[str, Any]:
     """Scores using the SAME selection direction production actually ships with:
-    best_match_per_off picks, per OFF/commercial product, its single best FNDDS
+    best_match_per_catalog picks, per OFF/commercial product, its single best FNDDS
     candidate (drop_duplicates on unique_id_r, the OFF side) -- so this dedups on
     unique_id_r too. Previously this dedup'd on unique_id_l (the FNDDS side) instead,
     answering "if we pick FNDDS records' best OFF partner, do we find the right one" --
@@ -318,10 +323,10 @@ def score_against_holdout(
     this pipeline doesn't actually run.
 
     The OFF side includes sampled decoys with no true fdc_id at all (see
-    build_eval_frames) -- they compete for best-match slots on their OWN off_id (which
+    build_eval_frames) -- they compete for best-match slots on their OWN catalog_id (which
     is realistic: a real product's candidate pool always includes near-miss FNDDS
     records), but since they have no gold answer they're excluded from the
-    precision/recall accounting entirely (see the off_id in off_to_true_fndds filter
+    precision/recall accounting entirely (see the catalog_id in catalog_to_true_fndds filter
     below), not counted as either correct or incorrect.
 
     Also returns category-level precision/recall/f1 (see _category_level_score)
@@ -331,8 +336,8 @@ def score_against_holdout(
     And returns max_achievable_{precision,recall,f1} (see _resolvable_ceiling) -- the
     best exact-id score this SAMPLE'S own duplicate-description structure allows any
     model to reach, so f1 is read against a reachable ceiling, not against 1.0."""
-    fndds_df, off_df, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
-    if fndds_df.empty or off_df.empty:
+    fndds_df, catalog_df, true_labels, preds = _build_holdout_predictions(block_name, attrs, trained_settings)
+    if fndds_df.empty or catalog_df.empty:
         return {
             "n_holdout_positives": 0,
             "precision": None,
@@ -348,19 +353,19 @@ def score_against_holdout(
             "max_achievable_f1": None,
         }
 
-    off_to_true_fndds = _off_to_true_fndds(true_labels)
+    catalog_to_true_fndds = _catalog_to_true_fndds(true_labels)
 
     # Best (highest-probability) FNDDS match per OFF-side unique_id -- mirrors
-    # best_match_per_off's real production selection (see docstring above).
+    # best_match_per_catalog's real production selection (see docstring above).
     best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_r")
     best = best[best["match_probability"] >= threshold]
 
-    predicted = dict(zip(best["unique_id_r"], best["unique_id_l"]))  # off_id -> predicted fndds_id
-    predicted_true_only = {off_id: fndds_id for off_id, fndds_id in predicted.items() if off_id in off_to_true_fndds}
+    predicted = dict(zip(best["unique_id_r"], best["unique_id_l"]))  # catalog_id -> predicted fndds_id
+    predicted_true_only = {catalog_id: fndds_id for catalog_id, fndds_id in predicted.items() if catalog_id in catalog_to_true_fndds}
 
-    n_true = len(off_to_true_fndds)  # distinct OFF items with a genuine known-correct partner
+    n_true = len(catalog_to_true_fndds)  # distinct OFF items with a genuine known-correct partner
     n_pred = len(predicted_true_only)
-    n_correct = sum(1 for off_id, fndds_id in predicted_true_only.items() if fndds_id in off_to_true_fndds[off_id])
+    n_correct = sum(1 for catalog_id, fndds_id in predicted_true_only.items() if fndds_id in catalog_to_true_fndds[catalog_id])
 
     precision = n_correct / n_pred if n_pred else 0.0
     recall = n_correct / n_true if n_true else 0.0
@@ -375,8 +380,8 @@ def score_against_holdout(
         "precision": precision,
         "recall": recall,
         "f1": f1,
-        **_category_level_score(predicted_true_only, off_to_true_fndds, fndds_desc_by_id),
-        **_resolvable_ceiling(off_to_true_fndds, fndds_desc_by_id),
+        **_category_level_score(predicted_true_only, catalog_to_true_fndds, fndds_desc_by_id),
+        **_resolvable_ceiling(catalog_to_true_fndds, fndds_desc_by_id),
     }
 
 
@@ -396,7 +401,7 @@ def _holdout_error_examples(
     # threshold) but not one of that OFF record's true partner(s) -- the n
     # highest-probability such mistakes, i.e. what's most urgently over-matching right
     # now.
-    off_to_true_fndds = _off_to_true_fndds(true_labels)
+    catalog_to_true_fndds = _catalog_to_true_fndds(true_labels)
     best = preds.sort_values("match_probability", ascending=False).drop_duplicates(subset="unique_id_r")
     confident = best[best["match_probability"] >= threshold]
     if confident.empty:
@@ -406,7 +411,7 @@ def _holdout_error_examples(
         false_positives = confident
     else:
         is_wrong = confident.apply(
-            lambda r: r["unique_id_l"] not in off_to_true_fndds.get(r["unique_id_r"], set()), axis=1
+            lambda r: r["unique_id_l"] not in catalog_to_true_fndds.get(r["unique_id_r"], set()), axis=1
         )
         false_positives = confident[is_wrong].sort_values("match_probability", ascending=False).head(n)
 
@@ -428,7 +433,7 @@ def _holdout_error_examples(
         # metric artifact no new attribute could ever fix -- verified real case:
         # "BLACK BEANS" predicted-matched to "BLACK BEANS" at 0.99 confidence, flagged
         # wrong only because it wasn't the arbitrary fdc_id the holdout happened to
-        # label as truth for that off_code. Without this tag, identify_gap (see
+        # label as truth for that catalog_code. Without this tag, identify_gap (see
         # llm/prompts.py's _GAP_SYSTEM) has no way to tell that apart from a genuine
         # miss like "CADIA REFRIED VEGETARIAN BEANS" vs "Vegetarian Refried Pinto
         # Beans" (different text, a real gap an attribute could plausibly close), and
@@ -437,7 +442,7 @@ def _holdout_error_examples(
         # instead of aggregated.
         fndds_desc_by_id = dict(zip(preds["unique_id_l"], preds["description_l"]))
         for record in false_positive_records:
-            true_ids = off_to_true_fndds.get(record["unique_id_r"], set())
+            true_ids = catalog_to_true_fndds.get(record["unique_id_r"], set())
             true_descs = {_normalize_text(fndds_desc_by_id[t]) for t in true_ids if t in fndds_desc_by_id}
             record["same_text_as_true_partner"] = bool(true_descs) and _normalize_text(record["description_l"]) in true_descs
 
@@ -459,7 +464,7 @@ def holdout_error_examples(
 
     "false_positives": each OFF record's best FNDDS match, confidently (>= `threshold`)
     predicted, that is NOT one of that OFF record's true calibration partner(s) --
-    same per-OFF-record selection production's best_match_per_off actually uses (see
+    same per-OFF-record selection production's best_match_per_catalog actually uses (see
     score_against_holdout's docstring). Each carries a "same_text_as_true_partner" flag
     -- True means the predicted (wrong) record's description text is byte-identical to
     the true partner's, i.e. this is a duplicate-description metric artifact no
@@ -477,7 +482,7 @@ def holdout_error_examples(
 
 def _attribute_discriminative_power(
     fndds_df: pd.DataFrame,
-    off_df: pd.DataFrame,
+    catalog_df: pd.DataFrame,
     true_labels: dict[str, str],
     attrs: list[dict[str, Any]],
     n_decoys_per_positive: int = 5,
@@ -487,28 +492,28 @@ def _attribute_discriminative_power(
     so it's testable against small synthetic frames without needing the real
     calibration parquet (same rationale as profiling._rank_terms's split from
     high_frequency_terms)."""
-    if fndds_df.empty or off_df.empty or not true_labels:
+    if fndds_df.empty or catalog_df.empty or not true_labels:
         return []
 
     fndds_by_id = fndds_df.set_index("unique_id")
-    off_by_id = off_df.set_index("unique_id")
-    off_ids = list(off_by_id.index)
+    catalog_by_id = catalog_df.set_index("unique_id")
+    catalog_ids = list(catalog_by_id.index)
     rng = random.Random(seed)
 
     results = []
     for attr in attrs:
         name = attr["name"]
-        if name not in fndds_by_id.columns or name not in off_by_id.columns:
+        if name not in fndds_by_id.columns or name not in catalog_by_id.columns:
             continue
         true_agree = []
         decoy_agree = []
-        for fndds_id, true_off_id in true_labels.items():
-            if fndds_id not in fndds_by_id.index or true_off_id not in off_by_id.index:
+        for fndds_id, true_catalog_id in true_labels.items():
+            if fndds_id not in fndds_by_id.index or true_catalog_id not in catalog_by_id.index:
                 continue
             l_val = fndds_by_id.loc[fndds_id, name]
-            true_agree.append(l_val == off_by_id.loc[true_off_id, name])
-            decoy_ids = [oid for oid in rng.sample(off_ids, min(n_decoys_per_positive, len(off_ids))) if oid != true_off_id]
-            decoy_agree.extend(l_val == off_by_id.loc[oid, name] for oid in decoy_ids)
+            true_agree.append(l_val == catalog_by_id.loc[true_catalog_id, name])
+            decoy_ids = [oid for oid in rng.sample(catalog_ids, min(n_decoys_per_positive, len(catalog_ids))) if oid != true_catalog_id]
+            decoy_agree.extend(l_val == catalog_by_id.loc[oid, name] for oid in decoy_ids)
         if not true_agree or not decoy_agree:
             continue
         results.append(
@@ -542,13 +547,13 @@ def attribute_discriminative_power(
     Pure value comparison against attribute columns splink_model already computes for
     build_eval_frames' output -- no model training/prediction involved, so this is cheap
     to run every round regardless of block size."""
-    fndds_df, off_df, true_labels = build_eval_frames(block_name, attrs)
+    fndds_df, catalog_df, true_labels = build_eval_frames(block_name, attrs)
     return _attribute_discriminative_power(
-        fndds_df, off_df, true_labels, attrs, n_decoys_per_positive=n_decoys_per_positive, seed=seed
+        fndds_df, catalog_df, true_labels, attrs, n_decoys_per_positive=n_decoys_per_positive, seed=seed
     )
 
 
-def best_match_per_off(predictions: pd.DataFrame, min_probability: float = 0.0) -> pd.DataFrame:
+def best_match_per_catalog(predictions: pd.DataFrame, min_probability: float = 0.0) -> pd.DataFrame:
     """Collapse `predictions` (every FNDDS<->OFF candidate pair splink scored) down to
     the single best (highest match_probability) FNDDS record per OFF record.
 
@@ -612,8 +617,8 @@ def export_predictions_csv(
         columns={
             "unique_id_l": "fndds_id",
             "description_l": "fndds_description",
-            "unique_id_r": "off_code",
-            "description_r": "off_product_name",
+            "unique_id_r": "catalog_code",
+            "description_r": "catalog_product_name",
         }
     )
     out.to_csv(out_path, index=False)

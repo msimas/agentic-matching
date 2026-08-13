@@ -13,8 +13,8 @@ def test_boolean_attribute_false_when_keyword_absent():
     assert apply_attribute(IS_GREEK, "Yogurt, plain, whole milk", "fndds") is False
 
 
-def test_boolean_attribute_matches_off_side_synonym():
-    assert apply_attribute(IS_GREEK, "Yaourt grec nature", "off") is True
+def test_boolean_attribute_matches_catalog_side_synonym():
+    assert apply_attribute(IS_GREEK, "Yaourt grec nature", "catalog") is True
 
 
 def test_boolean_attribute_handles_none_text():

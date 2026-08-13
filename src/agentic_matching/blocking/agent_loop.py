@@ -24,7 +24,7 @@ import duckdb
 
 from agentic_matching import profiling
 from agentic_matching.blocking.metrics import evaluate_rule
-from agentic_matching.blocking.rules import fndds_predicate_sql, off_predicate_sql
+from agentic_matching.blocking.rules import fndds_predicate_sql, catalog_predicate_sql
 from agentic_matching.blocking.seed_rules import get_seed_notes, get_seed_rule
 from agentic_matching.config import (
     BLOCKS_DIR,
@@ -64,15 +64,15 @@ def _sample_texts(con: duckdb.DuckDBPyConnection, block_name: str, n: int = 40) 
     fndds_rows = con.execute(
         f"SELECT description FROM v_fndds WHERE {fndds_pred} ORDER BY fdc_id LIMIT {n}"
     ).fetchall()
-    off_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-    off_pred = term_predicate_sql("lower(coalesce(product_name, ''))", block_name)
-    off_rows = con.execute(
+    catalog_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
+    catalog_pred = term_predicate_sql("lower(coalesce(product_name, ''))", block_name)
+    catalog_rows = con.execute(
         f"""
-        SELECT product_name FROM read_parquet('{off_path}')
-        WHERE {off_pred} ORDER BY code LIMIT {n}
+        SELECT product_name FROM read_parquet('{catalog_path}')
+        WHERE {catalog_pred} ORDER BY code LIMIT {n}
         """
     ).fetchall()
-    return [r[0] for r in fndds_rows if r[0]], [r[0] for r in off_rows if r[0]]
+    return [r[0] for r in fndds_rows if r[0]], [r[0] for r in catalog_rows if r[0]]
 
 
 def _category_options(
@@ -130,23 +130,23 @@ def _category_options(
         ORDER BY tm.matched DESC LIMIT {k}
         """
     ).fetchall()
-    off_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-    off_raw_path = str(OFF_PARQUET).replace("'", "''")
-    off_term_pred = term_predicate_sql("lower(coalesce(product_name, ''))", block_name)
-    off_rows = con.execute(
+    catalog_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
+    catalog_raw_path = str(OFF_PARQUET).replace("'", "''")
+    catalog_term_pred = term_predicate_sql("lower(coalesce(product_name, ''))", block_name)
+    catalog_rows = con.execute(
         f"""
         WITH term_matched AS (
             SELECT tag, count(*) AS matched FROM (
                 SELECT unnest(categories_tags) AS tag
-                FROM read_parquet('{off_path}')
-                WHERE {off_term_pred}
+                FROM read_parquet('{catalog_path}')
+                WHERE {catalog_term_pred}
             )
             WHERE tag IS NOT NULL AND tag != 'en:null'
             GROUP BY 1
         ),
         catalog_wide AS (
             SELECT tag, count(*) AS total FROM (
-                SELECT unnest(categories_tags) AS tag FROM read_parquet('{off_raw_path}')
+                SELECT unnest(categories_tags) AS tag FROM read_parquet('{catalog_raw_path}')
             )
             WHERE tag IS NOT NULL AND tag != 'en:null'
             GROUP BY 1
@@ -159,7 +159,7 @@ def _category_options(
     ).fetchall()
     return {
         "fndds": [{"value": v, "count": c} for v, c in fndds_rows],
-        "off": [{"value": v, "count": c} for v, c in off_rows],
+        "catalog": [{"value": v, "count": c} for v, c in catalog_rows],
     }
 
 
@@ -249,7 +249,7 @@ def _select_final_rule(rounds: list[BlockingRound], seed_round: BlockingRound | 
     `seed_round` -- the hand-curated seed rule (see seed_rules.py), scored the same way
     as any other round and included as a baseline candidate, NOT just a starting point
     to show the LLM. Verified real gap this closes (breaded_vegetables,
-    LLM_DEVICE=databricks): the seed scored n_fndds_block=16/n_off_block=89/
+    LLM_DEVICE=databricks): the seed scored n_fndds_block=16/n_catalog_block=89/
     pair_completeness=0.030, and the LLM's very first proposal (round 0) came back
     WORSE on every axis (10/53/0.006, having also dropped every exclude_keyword) --
     round 0 was never compared against the seed it was supposedly refining before this,
@@ -280,10 +280,10 @@ def materialize_block(con: duckdb.DuckDBPyConnection, block_name: str, rule: dic
     # "fruit", "whole") match wildly unrelated records (chicken, pasta, cookies, ...)
     # when tested against the concatenated blob. See rules.py's module docstring.
     fndds_pred = fndds_predicate_sql(rule, text_col="f.description", category_col="f.wweia_food_category_description")
-    off_pred = off_predicate_sql(rule, text_col="search_text")
+    catalog_pred = catalog_predicate_sql(rule, text_col="search_text")
 
     fndds_out = str(BLOCKS_DIR / f"{block_name}_fndds.parquet").replace("'", "''")
-    off_out = str(BLOCKS_DIR / f"{block_name}_off.parquet").replace("'", "''")
+    catalog_out = str(BLOCKS_DIR / f"{block_name}_catalog.parquet").replace("'", "''")
 
     con.execute(
         f"""
@@ -295,12 +295,12 @@ def materialize_block(con: duckdb.DuckDBPyConnection, block_name: str, rule: dic
         ) TO '{fndds_out}' (FORMAT PARQUET)
         """
     )
-    con.execute(f"COPY (SELECT * FROM off_search WHERE {off_pred}) TO '{off_out}' (FORMAT PARQUET)")
+    con.execute(f"COPY (SELECT * FROM catalog_search WHERE {catalog_pred}) TO '{catalog_out}' (FORMAT PARQUET)")
 
     n_fndds = con.execute(f"SELECT count(*) FROM read_parquet('{fndds_out}')").fetchone()[0]
-    n_off = con.execute(f"SELECT count(*) FROM read_parquet('{off_out}')").fetchone()[0]
-    log.info("Materialized block '%s': %d FNDDS records, %d OFF records", block_name, n_fndds, n_off)
-    return {"n_fndds": n_fndds, "n_off": n_off}
+    n_catalog = con.execute(f"SELECT count(*) FROM read_parquet('{catalog_out}')").fetchone()[0]
+    log.info("Materialized block '%s': %d FNDDS records, %d OFF records", block_name, n_fndds, n_catalog)
+    return {"n_fndds": n_fndds, "n_catalog": n_catalog}
 
 
 def run_blocking_agent(
@@ -318,8 +318,8 @@ def run_blocking_agent(
     client = client or get_llm_client()
     profiling.build(force=False)  # no-op if already built (see scripts/03_build_fdc_db.py)
     con = duckdb.connect(str(FDC_DUCKDB_PATH))
-    off_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
-    con.execute(f"CREATE OR REPLACE VIEW off_search AS SELECT * FROM read_parquet('{off_path}')")
+    catalog_path = str(OFF_SEARCH_TEXT_PARQUET).replace("'", "''")
+    con.execute(f"CREATE OR REPLACE VIEW catalog_search AS SELECT * FROM read_parquet('{catalog_path}')")
     con.execute(
         """
         CREATE OR REPLACE VIEW fndds_search AS
@@ -331,18 +331,18 @@ def run_blocking_agent(
         """
     )
 
-    fndds_samples, off_samples = _sample_texts(con, block_name)
+    fndds_samples, catalog_samples = _sample_texts(con, block_name)
     category_options = _category_options(con, block_name)
     corpus_stats = {
         # FNDDS is only ~5.4K rows total -- informational top-k, not a hard genericness
-        # bar (see profiling.OFF_GENERIC_TERM_MIN_DOC_COUNT's docstring for why).
+        # bar (see profiling.generic_term_min_doc_count's docstring for why).
         "fndds": {"n_records": profiling.n_records("fndds"), "catalog_wide_common_terms": profiling.high_frequency_terms("fndds")},
         # OFF is ~4.66M rows -- an absolute doc-count floor, not a fixed top-k, so a
         # term like "green"/"black" (broad, but not quite top-40 by rank) isn't missed.
-        "off": {
-            "n_records": profiling.n_records("off"),
+        "catalog": {
+            "n_records": profiling.n_records("catalog"),
             "catalog_wide_common_terms": profiling.high_frequency_terms(
-                "off", min_doc_count=profiling.OFF_GENERIC_TERM_MIN_DOC_COUNT
+                "catalog", min_doc_count=profiling.generic_term_min_doc_count("catalog")
             ),
         },
     }
@@ -350,7 +350,7 @@ def run_blocking_agent(
     rounds: list[BlockingRound] = []
     # None for most blocks (fully LLM-proposed, as originally designed); a hand-curated
     # starting point for a block with an entry in seed_rules.json (e.g. exclude_keywords
-    # already known to be needed) -- see seed_rules.py's docstring. Only "fndds"/"off"
+    # already known to be needed) -- see seed_rules.py's docstring. Only "fndds"/"catalog"
     # seed round 0 -- "notes" (below) is echoed every round instead, since it's
     # persistent domain guidance, not rule state the LLM revises round over round. Only
     # the recognized rule keys are kept -- seed_rules.json may also carry a documentation
@@ -360,7 +360,7 @@ def run_blocking_agent(
     prev_rule: dict[str, Any] | None = (
         {
             side: {k: seed_rule[side][k] for k in ("keywords", "categories", "exclude_keywords") if k in seed_rule[side]}
-            for side in ("fndds", "off")
+            for side in ("fndds", "catalog")
         }
         if seed_rule
         else None
@@ -373,7 +373,7 @@ def run_blocking_agent(
     # reference point) -- NOT included in the returned `rounds` list, only in the
     # separate candidate pool `_select_final_rule` chooses from. Verified real gap this
     # closes (breaded_vegetables, LLM_DEVICE=databricks): a hand-curated seed scored
-    # n_fndds_block=16/n_off_block=89/pair_completeness=0.030, and the LLM's very first
+    # n_fndds_block=16/n_catalog_block=89/pair_completeness=0.030, and the LLM's very first
     # proposal (round 0) came back WORSE on every axis (10/53/0.006, having also
     # dropped every exclude_keyword) -- nothing previously compared round 0 against the
     # seed it was supposedly refining, only against OTHER LLM rounds, so that
@@ -384,7 +384,7 @@ def run_blocking_agent(
         sys_p, user_p = build_blocking_prompt(
             block_name,
             fndds_samples,
-            off_samples,
+            catalog_samples,
             previous_rule=prev_rule,
             metrics=prev_metrics,
             corpus_stats=corpus_stats,
@@ -402,7 +402,7 @@ def run_blocking_agent(
         )
         try:
             response = client.complete_json(sys_p, user_p, temperature=temperature)
-            rule = {"fndds": response["fndds"], "off": response["off"]}
+            rule = {"fndds": response["fndds"], "catalog": response["catalog"]}
         except Exception:
             # A real LLM backend can fail a round outright (e.g. a reasoning model
             # exhausting its token budget mid-thought and never emitting valid JSON --
@@ -438,9 +438,9 @@ def run_blocking_agent(
             rule["fndds"].get("keywords"),
             rule["fndds"].get("categories"),
             rule["fndds"].get("exclude_keywords"),
-            rule["off"].get("keywords"),
-            rule["off"].get("categories"),
-            rule["off"].get("exclude_keywords"),
+            rule["catalog"].get("keywords"),
+            rule["catalog"].get("categories"),
+            rule["catalog"].get("exclude_keywords"),
         )
         _write_artifact(run_dir, rounds[-1])
 

@@ -6,9 +6,22 @@
     "fndds_keywords": [
       "greek"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "greek",
       "grec"
+    ]
+  },
+  {
+    "name": "is_plain",
+    "kind": "boolean",
+    "description": "Is this a plain (unflavored) yogurt?",
+    "fndds_keywords": [
+      "plain"
+    ],
+    "catalog_keywords": [
+      "plain",
+      "nature",
+      "natural"
     ]
   },
   {
@@ -20,11 +33,45 @@
       "smoothie",
       "kefir"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "drink",
       "smoothie",
       "kefir",
       "a boire"
+    ]
+  },
+  {
+    "name": "is_baby",
+    "kind": "boolean",
+    "description": "Is this targeted at infants/toddlers?",
+    "fndds_keywords": [
+      "baby food",
+      "infant"
+    ],
+    "catalog_keywords": [
+      "baby",
+      "infant",
+      "toddler"
+    ]
+  },
+  {
+    "name": "fruit_flavored",
+    "kind": "boolean",
+    "description": "Is this flavored using fruit?",
+    "fndds_keywords": [
+      "fruit",
+      "strawberry",
+      "blueberry",
+      "peach",
+      "berry"
+    ],
+    "catalog_keywords": [
+      "fruit",
+      "strawberry",
+      "blueberry",
+      "peach",
+      "berry",
+      "fraise"
     ]
   },
   {
@@ -37,7 +84,7 @@
       "oat",
       "muesli"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "granola",
       "cereal",
       "oat",
@@ -55,7 +102,7 @@
           "fat free",
           "skim"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "fat free",
           "0% fat",
           "skimmed",
@@ -68,7 +115,7 @@
           "lowfat",
           "low-fat"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "low fat",
           "light",
           "1%",
@@ -79,91 +126,10 @@
         "fndds_keywords": [
           "whole milk"
         ],
-        "off_keywords": [
+        "catalog_keywords": [
           "whole milk",
           "full fat",
           "entier"
-        ]
-      }
-    }
-  },
-  {
-    "name": "specific_fruit_flavor",
-    "kind": "categorical",
-    "description": "The specific fruit flavor present in the yogurt, if any.  This is more granular than a simple 'fruit flavored' boolean.",
-    "categories": {
-      "strawberry": {
-        "fndds_keywords": [
-          "strawberry"
-        ],
-        "off_keywords": [
-          "strawberry"
-        ]
-      },
-      "blueberry": {
-        "fndds_keywords": [
-          "blueberry"
-        ],
-        "off_keywords": [
-          "blueberry"
-        ]
-      },
-      "peach": {
-        "fndds_keywords": [
-          "peach"
-        ],
-        "off_keywords": [
-          "peach"
-        ]
-      },
-      "vanilla": {
-        "fndds_keywords": [
-          "vanilla"
-        ],
-        "off_keywords": [
-          "vanilla"
-        ]
-      },
-      "mango": {
-        "fndds_keywords": [
-          "mango"
-        ],
-        "off_keywords": [
-          "mango"
-        ]
-      },
-      "lemon": {
-        "fndds_keywords": [
-          "lemon"
-        ],
-        "off_keywords": [
-          "lemon"
-        ]
-      },
-      "pistachio": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "pistachio"
-        ]
-      },
-      "mirabelle": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "mirabelle"
-        ]
-      },
-      "salted caramel": {
-        "fndds_keywords": [],
-        "off_keywords": [
-          "salted caramel"
-        ]
-      },
-      "plain": {
-        "fndds_keywords": [
-          "plain"
-        ],
-        "off_keywords": [
-          "plain"
         ]
       }
     }

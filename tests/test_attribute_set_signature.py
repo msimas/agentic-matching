@@ -1,8 +1,8 @@
 from agentic_matching.attributes.rules import attribute_set_signature
 
-A = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney"], "off_keywords": ["kidney"]}}}
-A_REDEFINED = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney", "red kidney"], "off_keywords": ["kidney"]}}}
-B = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat", "fndds_keywords": ["pork"], "off_keywords": ["pork"]}
+A = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney"], "catalog_keywords": ["kidney"]}}}
+A_REDEFINED = {"name": "beans_bean_type", "kind": "categorical", "description": "type", "categories": {"kidney": {"fndds_keywords": ["kidney", "red kidney"], "catalog_keywords": ["kidney"]}}}
+B = {"name": "beans_contains_meat", "kind": "boolean", "description": "meat", "fndds_keywords": ["pork"], "catalog_keywords": ["pork"]}
 
 
 def test_identical_sets_have_equal_signature():

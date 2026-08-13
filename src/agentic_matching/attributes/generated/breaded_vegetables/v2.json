@@ -1,137 +1,68 @@
 [
   {
-    "name": "breaded_vegetables_vegetable_type",
-    "kind": "categorical",
-    "description": "The specific vegetable being breaded or fried.",
-    "categories": {
-      "onion": {
-        "fndds_keywords": [
-          "onion",
-          "rings"
-        ],
-        "off_keywords": [
-          "onion",
-          "rings",
-          "bhaji",
-          "bhajis"
-        ]
-      },
-      "sweet_potato": {
-        "fndds_keywords": [
-          "sweet potato",
-          "sweet",
-          "potato",
-          "tots"
-        ],
-        "off_keywords": [
-          "sweet potato",
-          "sweet",
-          "potato"
-        ]
-      },
-      "mushroom": {
-        "fndds_keywords": [
-          "mushroom"
-        ],
-        "off_keywords": [
-          "mushroom"
-        ]
-      },
-      "cauliflower": {
-        "fndds_keywords": [
-          "cauliflower"
-        ],
-        "off_keywords": [
-          "cauliflower"
-        ]
-      },
-      "eggplant": {
-        "fndds_keywords": [
-          "eggplant"
-        ],
-        "off_keywords": [
-          "eggplant"
-        ]
-      },
-      "green_bean": {
-        "fndds_keywords": [
-          "green bean",
-          "green"
-        ],
-        "off_keywords": [
-          "green bean",
-          "green"
-        ]
-      },
-      "broccoli": {
-        "fndds_keywords": [
-          "broccoli"
-        ],
-        "off_keywords": [
-          "broccoli"
-        ]
-      },
-      "okra": {
-        "fndds_keywords": [
-          "okra"
-        ],
-        "off_keywords": [
-          "okra"
-        ]
-      },
-      "tomato": {
-        "fndds_keywords": [
-          "tomato",
-          "tomatoes"
-        ],
-        "off_keywords": [
-          "tomato",
-          "tomatoes"
-        ]
-      },
-      "yuca": {
-        "fndds_keywords": [
-          "yuca"
-        ],
-        "off_keywords": [
-          "yuca"
-        ]
-      }
-    }
-  },
-  {
-    "name": "breaded_vegetables_is_tempura",
+    "name": "has_fried",
     "kind": "boolean",
-    "description": "Is this product prepared as tempura?",
+    "description": "Does the text mention 'fried'?",
     "fndds_keywords": [
-      "tempura"
+      "fried"
     ],
-    "off_keywords": [
-      "tempura"
+    "catalog_keywords": [
+      "fried"
     ]
   },
   {
-    "name": "breaded_vegetables_is_pakora",
+    "name": "has_sweet",
     "kind": "boolean",
-    "description": "Is this product prepared as pakora?",
+    "description": "Does the text mention 'sweet'?",
     "fndds_keywords": [
-      "pakora"
+      "sweet"
     ],
-    "off_keywords": [
-      "pakora",
-      "bhaji",
-      "bhajis"
+    "catalog_keywords": [
+      "sweet"
     ]
   },
   {
-    "name": "breaded_vegetables_is_frozen",
+    "name": "has_fries",
     "kind": "boolean",
-    "description": "Is this product frozen?",
+    "description": "Does the text mention 'fries'?",
+    "fndds_keywords": [
+      "fries"
+    ],
+    "catalog_keywords": [
+      "fries"
+    ]
+  },
+  {
+    "name": "has_onion",
+    "kind": "boolean",
+    "description": "Does the text mention 'onion'?",
+    "fndds_keywords": [
+      "onion"
+    ],
+    "catalog_keywords": [
+      "onion"
+    ]
+  },
+  {
+    "name": "has_frozen",
+    "kind": "boolean",
+    "description": "Does the text mention 'frozen'?",
     "fndds_keywords": [
       "frozen"
     ],
-    "off_keywords": [
+    "catalog_keywords": [
       "frozen"
+    ]
+  },
+  {
+    "name": "has_rings",
+    "kind": "boolean",
+    "description": "Does the text mention 'rings'?",
+    "fndds_keywords": [
+      "rings"
+    ],
+    "catalog_keywords": [
+      "rings"
     ]
   }
 ]

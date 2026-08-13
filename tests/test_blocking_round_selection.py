@@ -129,7 +129,7 @@ def test_single_round_is_returned_even_below_floors():
 # -- seed_round as a scored baseline candidate ---------------------------------------
 #
 # Real case this covers (breaded_vegetables, LLM_DEVICE=databricks): the seed rule
-# scored n_fndds_block=16/n_off_block=89/pair_completeness=0.030, and the LLM's own
+# scored n_fndds_block=16/n_catalog_block=89/pair_completeness=0.030, and the LLM's own
 # round 0 came back WORSE on every axis (10/53/0.006, having dropped every
 # exclude_keyword) -- round 0 was only ever compared against other LLM rounds before
 # this, never against the seed it was supposedly refining, so nothing caught a
