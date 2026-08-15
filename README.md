@@ -1,17 +1,16 @@
 # Agentic Food Data Linkages Constructor — POC
 
-LLM-assisted probabilistic record linkage: connects USDA FoodData Central (FDC) records
-to a food-product database (Open Food Facts today), using `splink` (DuckDB backend) for
-the probabilistic matching and a small LLM to propose/iterate blocking rules and matching
-attributes — mirroring the manual SME workflow this is meant to assist. See `PLAN.md` for
-the full design.
+This tool links USDA FoodData Central (FDC) records to a food-product database. Today
+that database is Open Food Facts (OFF). The tool uses `splink` (DuckDB backend) to do
+the probabilistic matching. A small LLM proposes and revises the blocking rules and the
+matching attributes. The tool mirrors the manual process a subject-matter expert (SME)
+uses today. See `PLAN.md` for the full design.
 
-FNDDS is the fixed anchor side in every stage of this pipeline; the "other" side is a
-pluggable `CatalogSource` (`catalog_source.py`) — see "The pluggable second side" below
-for what that means and how to point the pipeline at a different food-product database.
-Open Food Facts (OFF) is the one real instantiation in use today, so "OFF"/"catalog" show
-up interchangeably throughout this document and the codebase: `catalog_*` names are the
-generic concept, "OFF" is what that concept concretely means right now.
+FNDDS is the fixed side in every stage of this pipeline. The other side is a pluggable
+`CatalogSource` (`catalog_source.py`). See "The pluggable second side" below. Open Food
+Facts is the one real `CatalogSource` in use today. Because of this, the terms
+`off_*` and `catalog_*` mean the same thing throughout this document and the code. The
+`catalog_*` names are the general term. "OFF" is what that term means right now.
 
 ## Setup
 
@@ -20,26 +19,26 @@ uv sync
 cp .env.example .env   # adjust if needed; sane CPU defaults are baked in
 ```
 
-Requires `data/food.parquet` (Open Food Facts) to already be present — it isn't
-fetched by any script here, so download it once yourself:
+You must have `data/food.parquet` (the Open Food Facts export) before you run the
+pipeline. No script here downloads it for you. Download it once yourself:
 
 ```bash
 curl -L -o data/food.parquet \
   https://huggingface.co/datasets/openfoodfacts/product-database/resolve/main/food.parquet
 ```
 
-This is Open Food Facts' full product export in parquet form (~7.7GB), so the
-download takes a while; get the latest version straight from the
+This file is the full Open Food Facts product export, in parquet format (about
+7.7GB). The download takes a while. Get the newest version from the
 [Hugging Face dataset page](https://huggingface.co/datasets/openfoodfacts/product-database)
-if this URL ever moves.
+if this URL changes.
 
-## The pluggable "second side" (`catalog_source.py`)
+## The pluggable second side (`catalog_source.py`)
 
-Every stage of this pipeline (blocking, matching attributes, linking, profiling,
-calibration) reads the non-FNDDS side's paths, column names, category-match semantics,
-and text-flattening logic from a single `CatalogSource` value — `catalog_source.py`'s
-`ACTIVE_CATALOG_SOURCE` — instead of hardcoding Open Food Facts' specific shape.
-`CatalogSource` is a plain, frozen dataclass:
+Every stage of the pipeline — blocking, matching attributes, linking, profiling,
+calibration — reads the non-FNDDS side's settings from one `CatalogSource` value. This
+value is `catalog_source.py`'s `ACTIVE_CATALOG_SOURCE`. No stage hardcodes Open Food
+Facts' specific column names or file shape. `CatalogSource` is a plain, frozen Python
+dataclass:
 
 ```python
 CatalogSource(
@@ -53,29 +52,30 @@ CatalogSource(
 )
 ```
 
-Swapping the pipeline to a different food-product database (e.g. a proprietary retail
-catalog like Circana, which PLAN.md originally framed OFF as standing in for) means
-constructing a new `CatalogSource` for it — its own paths, column names,
-`category_kind` (`"exact"` for a single scalar category field, like FNDDS's own WWEIA
-category; `"array_contains"` for an array of tags, like OFF's) and its own
-`flatten_sql` implementation if its raw schema needs preprocessing into a flat
-`search_text` column the way OFF's struct/array fields do — then pointing
-`ACTIVE_CATALOG_SOURCE` at it. No blocking/attributes/linking/profiling code needs to
-change; `tests/test_catalog_source_abstraction.py` exercises a synthetic second
-`CatalogSource` (different column names, `"exact"` category matching, a no-op
-`flatten_sql`) specifically to confirm this holds, not just that OFF-with-new-names
-still works.
+To point the pipeline at a different food-product database — for example, a retail
+catalog such as Circana, which PLAN.md names as OFF's original stand-in — build a new
+`CatalogSource` for it. Give it its own paths and column names. Set `category_kind` to
+`"exact"` if the category field holds one plain value, the way FNDDS's own WWEIA
+category does. Set it to `"array_contains"` if the category field holds a list of tags,
+the way OFF's does. Write a `flatten_sql` function if the raw data needs work before it
+has a flat `search_text` column, the way OFF's struct/array fields do. Then point
+`ACTIVE_CATALOG_SOURCE` at the new value. No blocking, attributes, linking, or
+profiling code needs to change.
 
-FNDDS itself is NOT given a matching adapter — that asymmetry is deliberate, not an
-oversight: FNDDS is the fixed anchor in every real use case this project targets
-(~5.4K rows, no struct/array flattening needed, no scale-tuned constants), while the
-"other side" is what's expected to vary. See `catalog_source.py`'s module docstring
+`tests/test_catalog_source_abstraction.py` checks this claim. It builds a second,
+fake `CatalogSource` with different column names and `"exact"` category matching, and
+runs real code against it. This proves the abstraction works for more than just OFF
+under a new name.
+
+FNDDS itself has no `CatalogSource`. This is a deliberate choice, not an oversight.
+FNDDS is the fixed side in every real use case this project targets. It has about
+5,400 rows. It needs no struct/array flattening step and no scale-tuned constants. The
+other side is the one expected to change. See `catalog_source.py`'s module docstring
 for the full reasoning.
 
-Everywhere else in this document, `off_*`/`catalog_*` names refer to the SAME thing —
-the active `CatalogSource` — since OFF is that source today; a schema/column name
-described as "OFF's" below is accurate for the current deployment, not a hardcoded
-assumption in the code itself.
+Elsewhere in this document, the names `off_*` and `catalog_*` mean the same active
+`CatalogSource`, since OFF is that source today. Any OFF-specific column name or number
+below describes the *current* deployment. It is not a fixed assumption in the code.
 
 ## Pipeline
 
@@ -89,395 +89,455 @@ uv run scripts/06_run_matching_agent.py --block yogurt
 uv run scripts/07_run_splink_and_evaluate.py --block yogurt
 uv run scripts/08_visualize_matches.py waterfall --block yogurt   # or: weights | histogram | dashboard
 
-# Or run 05-07 as one bounded outer loop that re-blocks automatically if linking's
+# Or run 05-07 as one bounded outer loop. It re-blocks automatically if linking's
 # result looks like a blocking problem, not just an attribute problem (see below):
 uv run scripts/09_run_outer_loop.py --block yogurt
 ```
 
-Each agent-loop script logs every round to `data/artifacts/<block>/<run_id>/` for SME
-review, one timestamped directory per top-level invocation (see config.py's
-`new_run_id`/`run_artifacts_dir`) so successive runs of the same block don't overwrite
-each other and can be compared over time. Within a run's directory:
-`blocking_round<N>.json` and `attributes_round<N>.json` hold the proposed
-rule/attributes plus their metrics, and `linking_round<N>.json` holds degeneracy flags,
-holdout evaluation, and a plausibility summary (score distribution, top/bottom-10
-examples). For the linking stage specifically, `scripts/07_...` also writes every
-predicted FNDDS<->OFF pair (not just the JSON's top/bottom-10) to
-**`matches_round<N>.csv`** — sorted by `match_probability` descending, with each
-matching attribute's value on both sides alongside it — open that directly in a
-spreadsheet to inspect the actual match results.
+Each agent-loop script writes a log of every round to `data/artifacts/<block>/<run_id>/`.
+This log is for SME review. Each top-level run gets its own timestamped directory (see
+`config.py`'s `new_run_id`/`run_artifacts_dir`). Because of this, one run of a block
+never overwrites another, and you can compare runs over time. Inside a run's directory:
 
-**`final_matches.csv`** (no round number — overwritten each round, reflects the *best*
-round the loop produced this run, not necessarily the last one; see `select_best_round`
-below) is the actual deliverable, distinct from the review CSV above:
-`linking/evaluate.py::best_match_per_catalog` collapses every candidate pair down to
-the single best (highest `match_probability`) FNDDS record per catalog/commercial-product
-record. The real goal here is attaching nutritional information (FNDDS) to commercial
-products — a product should end up with *one* nutrition profile attached, not several
-competing FNDDS candidates — while one FNDDS record can legitimately attach to many
-different commercial products (many brands' "Black Beans" can all point at the same
-"Black beans, canned" nutrition profile), so only the catalog side is deduplicated.
-Nothing about this assumes OFF specifically: `best_match_per_catalog` only needs a
-`unique_id_r` column identifying the commercial-product side, so the same pipeline
-works unchanged against whatever `ACTIVE_CATALOG_SOURCE` is pointed at (see "The
-pluggable second side" above) — e.g. a proprietary retail catalog like Circana
-substituted for OFF.
+- `blocking_round<N>.json` and `attributes_round<N>.json` hold the proposed rule or
+  attributes, plus their metrics.
+- `linking_round<N>.json` holds degeneracy flags, holdout evaluation results, and a
+  plausibility summary (the score distribution, plus the top 10 and bottom 10 examples).
+- `matches_round<N>.csv` holds every predicted FNDDS↔OFF pair from that round, not just
+  the JSON's top/bottom 10. Rows are sorted by `match_probability`, highest first. Each
+  matching attribute's value is shown for both sides. Open this file directly in a
+  spreadsheet to check the real match results.
 
-### A later round can regress -- picking the best round, not just the last one
+`final_matches.csv` has no round number. Each round overwrites it. It always holds the
+result from the *best* round this run produced, not necessarily the last round (see
+"A later round can regress" below). This file is the real deliverable.
 
-All three agent loops (blocking, attributes, linking) can run for several rounds before
-stopping (stabilization or `max_rounds`), and a later round isn't guaranteed to be
-better than an earlier one -- an LLM revision can make things worse, and the loop has
-no built-in reason to notice unless something explicitly checks. Each loop now selects
-its final result from *all* completed rounds using whatever quality signal it actually
-has, rather than blindly using whichever round happened to run last:
+`linking/evaluate.py::best_match_per_catalog` builds this file. For each catalog
+record, it keeps only the single best (highest-`match_probability`) FNDDS match. The
+goal is to attach nutrition information from FNDDS to each commercial product. Each
+product should end up with one nutrition profile, not several competing FNDDS
+candidates. One FNDDS record can still match many different commercial products — for
+example, many brands' "Black Beans" can all point at the same "Black beans, canned"
+nutrition profile. Only the catalog side gets this one-best-match rule.
 
-- `blocking/agent_loop.py::_select_final_rule` -- prefers an earlier round if the
-  *last* round-to-round change in pair completeness/reduction ratio was negligible
-  (see its docstring for the verified case: a revision that grew the block from 148 to
-  1,282 FNDDS records while the proxy metric moved by less than the stabilization
-  threshold).
-- `attributes/agent_loop.py::select_final_attributes` -- prefers the round with the
-  fewest correlation flags (this loop's only quality signal, since it never trains a
-  real model).
-- `linking/agent_loop.py::select_best_round` -- prefers the round with the highest
-  holdout f1, but disqualifies any round with zero confident real-world matches
-  outright regardless of how good its calibration-proxy f1 looks. Verified real case
-  (yogurt, `qwen3:8b`): round 3 reached f1=0.048 with 55,516 confident matches; round
-  4's revision collapsed real-world matching to **zero** confident matches out of 296K
-  candidates, while its holdout f1 (0.024) merely looked "back to round 0's baseline" —
-  not obviously catastrophic on that number alone. If the loop's last round isn't the
-  selected best one, `final_matches.csv` is regenerated from the best round's
-  attributes before the loop returns (cheap: splink training/prediction is seconds,
-  the LLM call is what's expensive). `outer_loop.py`'s own reported metrics and
-  `diagnose_blocking_problem` use the same selection, not the last linking round.
+This deduplication step does not assume OFF. `best_match_per_catalog` only needs a
+`unique_id_r` column that identifies the commercial-product side. The same pipeline
+works, unchanged, against whatever `ACTIVE_CATALOG_SOURCE` points to (see "The
+pluggable second side" above) — for example, a retail catalog such as Circana, in
+place of OFF.
 
-## Outer loop: blocking<->linking feedback (`scripts/09_run_outer_loop.py`)
+### A later round can regress: the loop keeps the best round, not the last one
 
-`linking/agent_loop.py`'s inner loop only ever revises the *attribute* set — it never
-revises the *blocking* rule that determined which records were candidates in the first
-place. `outer_loop.py` closes that gap: it runs blocking → attributes → linking once,
-then `diagnose_blocking_problem` inspects the last linking round for two symptoms that
-specifically implicate the blocking rule rather than the attributes (attribute-shaped
-weaknesses are already the inner loop's job to fix): too few raw candidate pairs
-(`n_candidate_pairs` under `outer_loop.MIN_CANDIDATE_PAIRS`), or a `collapsed`
-degeneracy flag surviving every round of attribute revision. If either fires, the
-finding is fed back into another blocking round (as `prior_linking_findings`, via
-`run_blocking_agent`'s `linking_feedback` parameter) and the whole pipeline runs again —
-bounded by `AGENT_MAX_OUTER_ROUNDS` (default 2: "give re-blocking one chance," not an
-open-ended search). Each round is logged to
-`data/artifacts/<block>/<run_id>/outer_loop_round<N>.json`, in the same one-run-one-
-directory `<run_id>` blocking/attributes/linking's own artifacts land in (see above) —
-one `run_outer_loop` call, one shared run directory across every stage it includes.
+Each of the three agent loops — blocking, attributes, linking — can run for several
+rounds before it stops (either it stabilizes, or it hits `max_rounds`). A later round
+is not always better than an earlier one. An LLM revision can make a rule or attribute
+set worse. Nothing stops this unless a check looks for it directly. Because of this,
+each loop picks its final result from *all* completed rounds, using whatever quality
+signal it has. It does not simply use the last round it ran.
 
-`--steps` runs only a subset of the three stages against a block already partway
-through the pipeline, e.g.:
+- `blocking/agent_loop.py::_select_final_rule` favors an earlier round when the change
+  from the second-to-last round to the last round was small (see its docstring for a
+  real case: a revision grew a block from 148 to 1,282 FNDDS records while the proxy
+  metric moved by less than the stabilization threshold). It also compares every round
+  against the hand-written seed rule for that block, when one exists, and keeps the
+  seed rule if no round beats it. This guards against a first LLM round that is worse
+  than the seed rule it was meant to improve on.
+- `attributes/agent_loop.py::select_final_attributes` favors the round with the fewest
+  correlation flags. This is the only quality signal this loop has, since it never
+  trains a real matching model.
+- `linking/agent_loop.py::select_best_round` favors the round with the highest holdout
+  F1 score. It rejects any round with zero confident real-world matches outright, no
+  matter how good that round's calibration-proxy F1 score looks. Real case (yogurt
+  block, model `qwen3:8b`): round 3 reached F1=0.048 with 55,516 confident matches.
+  Round 4's revision dropped real-world matching to **zero** confident matches out of
+  296,000 candidates. Round 4's holdout F1 (0.024) looked only like a return to round
+  0's baseline — not an obvious disaster from that number alone. When the loop's last
+  round is not the best round, it rebuilds `final_matches.csv` from the best round's
+  attributes before it returns. This step is cheap: splink training and prediction take
+  seconds; the LLM call is the expensive part. `outer_loop.py`'s own reported metrics,
+  and its `diagnose_blocking_problem` check, use this same best-round selection. They
+  do not use the last linking round by default.
+
+## Outer loop: blocking↔linking feedback (`scripts/09_run_outer_loop.py`)
+
+`linking/agent_loop.py`'s inner loop only revises the *attribute* set. It never
+revises the *blocking* rule that chose which records were candidates in the first
+place. `outer_loop.py` closes this gap. It runs blocking, then attributes, then
+linking, once. Then `diagnose_blocking_problem` checks the last linking round for two
+signs that point at the blocking rule, not the attributes (an attribute-shaped problem
+is already the inner loop's job to fix):
+
+1. Too few raw candidate pairs (`n_candidate_pairs` under `outer_loop.MIN_CANDIDATE_PAIRS`).
+2. A `collapsed` degeneracy flag that survives every round of attribute revision.
+
+If either sign appears, the outer loop sends this finding back into a new blocking
+round (as `prior_linking_findings`, through `run_blocking_agent`'s `linking_feedback`
+parameter). Then it runs the whole pipeline again. This retry is bounded by
+`AGENT_MAX_OUTER_ROUNDS` (default: 2). The default gives re-blocking one chance to fix
+the problem. It is not an open-ended search.
+
+Each outer round writes to `data/artifacts/<block>/<run_id>/outer_loop_round<N>.json`.
+This is the same run directory the blocking, attributes, and linking stages write to
+(see above). One call to `run_outer_loop` uses one shared run directory across every
+stage it runs.
+
+`--steps` runs only some of the three stages, against a block that already went
+partway through the pipeline. For example:
 
 ```bash
 # Redo attribute selection (and relink) without touching the existing blocking rule:
 uv run scripts/09_run_outer_loop.py --block beans --steps attributes,linking
 
-# Just relink against whatever attributes are already persisted:
+# Just relink against whatever attributes are already saved:
 uv run scripts/09_run_outer_loop.py --block beans --steps linking
 ```
 
-A skipped stage isn't rerun with cached results — it's just not touched, and whichever
-later stages you did include use its last persisted output as-is. Its diagnostic
-artifacts are still copied forward from the most recent previous run into this run's
-directory, though, so a `--steps linking` run's folder still looks like a complete
-record (blocking/attributes artifacts included, just carried over rather than freshly
-produced) instead of one silently missing files every other run has. If no previous
-run has those artifacts to copy — the very first run for a block, or the previous run
-also skipped that stage — this fails loudly (`FileNotFoundError`) rather than
-silently leaving the new run's folder incomplete: run with the stage included at least
-once first. The re-blocking feedback loop above only fires when `--steps` includes both
-`blocking` and `linking` (nothing to re-block *in response to* otherwise) — with either
-excluded, it runs a single round and logs a warning instead of looping if a
-blocking-shaped problem is found but can't be acted on this run.
+A skipped stage does not rerun with cached results. The tool simply does not touch it.
+Any later stage you did include uses that stage's last saved output as-is. The tool
+still copies that skipped stage's diagnostic files forward from the most recent
+earlier run, into this run's directory. Because of this, even a `--steps linking` run's
+folder looks like a complete record — it has blocking and attribute files too, just
+carried over, not freshly made. This avoids leaving files silently missing.
+
+If no earlier run has the files to copy — this is the first run for a block, or the
+earlier run also skipped that stage — the tool fails loudly with a `FileNotFoundError`.
+It does not silently leave the new run's folder incomplete. In that case, run the
+pipeline once with the stage included, first.
+
+The re-blocking feedback step above fires only when `--steps` includes both `blocking`
+and `linking`. With no `linking` step, there is no later result to re-block in
+response to. If `blocking` or `linking` is missing, the tool runs a single round and
+logs a warning if it finds a blocking-shaped problem it cannot act on this run.
 
 ## Visualizing matches (`scripts/08_visualize_matches.py`)
 
-Wraps splink's own Altair/HTML chart methods (`linking/charts.py`) for a block's
-*current* attribute set (`attributes/generated/<block>/latest.json`), retraining fresh
-each call since nothing in this pipeline persists a trained model to disk (same as
-`linking/evaluate.py`). Output goes to `data/artifacts/chart_<kind>_<block>.html` —
-open directly in a browser.
+This script wraps splink's own Altair/HTML chart methods (`linking/charts.py`). It
+uses a block's *current* attribute set (`attributes/generated/<block>/latest.json`)
+and retrains a fresh model each time it runs, since this pipeline never saves a
+trained model to disk (the same is true of `linking/evaluate.py`). Each chart is
+written next to that block's most recent pipeline run, at
+`data/artifacts/<block>/<run_id>/chart_<kind>.html` — open it directly in a browser.
 
 - `waterfall --block yogurt [--n 10] [--mode stratified|top|bottom|borderline] [--threshold 0.0]`
-  — how each comparison contributed to the final match score, for a selection of pairs.
-  `stratified` (default) spreads the selection evenly across the whole score range so
-  the chart shows a representative mix of clear matches, clear non-matches, and
-  borderline cases, rather than N near-identical high-confidence pairs.
-- `weights --block yogurt` — the model's learned strength-of-evidence per comparison
-  level (doesn't need predictions, just the trained model).
-- `histogram --block yogurt [--threshold 0.0]` — distribution of match weights across
-  every predicted pair in the block.
+  — shows how each comparison added to the final match score, for a set of pairs.
+  `stratified` (the default) spreads the chosen pairs evenly across the whole score
+  range. This gives a mix of clear matches, clear non-matches, and borderline cases,
+  instead of `n` pairs that all look alike.
+- `weights --block yogurt` — shows the model's learned strength of evidence for each
+  comparison level. This chart needs no predictions, only the trained model.
+- `histogram --block yogurt [--threshold 0.0]` — shows the spread of match weights
+  across every predicted pair in the block.
 - `dashboard --block yogurt [--num-example-rows 3]` — splink's interactive
-  comparison-viewer dashboard; the most thorough option for manual SME review, at the
-  cost of a larger HTML file (a few MB).
+  comparison-viewer. This is the most thorough option for manual SME review. The
+  tradeoff is a larger HTML file, a few MB in size.
 
-The waterfall chart specifically requires splink's
-`retain_intermediate_calculation_columns=True`, which the main training path
-(`linking/splink_model.py::build_linker`) otherwise defaults to `False` for (see
-"Known constraints" below) — `charts.py` passes it explicitly for its own,
-separately-trained linker instance. This is safe at this project's bounded block sizes
-(verified: ~3.3GB peak for yogurt's ~660K candidate pairs) since the actual OOM cause
-was the *unbounded EM blocking* fixed in `train()`, not this flag by itself.
+The waterfall chart needs splink's `retain_intermediate_calculation_columns=True`
+setting. The main training path (`linking/splink_model.py::build_linker`) sets this to
+`False` by default (see "Known constraints" below). `charts.py` sets it to `True`
+directly, for its own, separately trained linker. This is safe at this project's block
+sizes (checked: about 3.3GB peak memory for yogurt's roughly 660,000 candidate pairs).
+The real past cause of high memory use was *unbounded EM blocking*, fixed in
+`train()`. It was not this flag on its own.
 
-## Corpus profiling: grounding LLM proposals in real catalog statistics
+## Corpus profiling: ground LLM proposals in real catalog statistics
 
-`profiling.py` computes, once (as part of `scripts/03_build_fdc_db.py`), exact
-token document-frequency and categorical field distributions over the **full** FNDDS
-and OFF datasets (fast even at OFF's ~4.66M rows — DuckDB's vectorized execution does
-this in well under a second, so no sampling is needed), and persists them to
-`data/profiling/`.
+`profiling.py` computes exact word-frequency counts and category-field distributions,
+once, over the **full** FNDDS and OFF datasets (as part of `scripts/03_build_fdc_db.py`).
+This step is fast even at OFF's roughly 4.66 million rows — DuckDB's vectorized
+execution finishes it in under a second, so no sampling step is needed. The results go
+to `data/profiling/`.
 
-Without this, the blocking and matching-attribute agent loops only ever showed the LLM
-(real or mock) a few dozen sample records per round — enough to mine plausible-looking
-keywords/categories from, but with no way to tell "specific to this block" apart from
-"common across the whole catalog". A keyword like `protein`, `rice`, or `black` looks
-harmless in a 40-row yogurt/beans sample but independently matches 20K-65K unrelated OFF
-records catalog-wide. Two things are now grounded in the precomputed stats instead of
-guesswork:
+Without this step, the blocking and matching-attribute agent loops only saw a few
+dozen sample records per round. This is enough to find plausible-looking keywords or
+categories, but gives no way to tell "specific to this block" apart from "common
+across the whole catalog." A keyword such as `protein`, `rice`, or `black` looks safe
+in a 40-row yogurt or beans sample. But on its own, each one matches 20,000 to 65,000
+unrelated OFF records across the whole catalog. Two parts of the pipeline now use the
+precomputed statistics instead of guessing:
 
 - **Blocking** (`blocking/agent_loop.py`): each round's prompt includes `corpus_stats`
-  — each side's catalog size plus its catalog-wide-common terms, with the system prompt
-  instructing the LLM to avoid proposing any of them as a standalone keyword unless the
-  block's own name. For the catalog side specifically, `llm/mock.py` also *enforces*
-  this as a hard rejection (`profiling.generic_term_min_doc_count("catalog")` — a
-  FRACTION of catalog size, not a fixed number, calibrated to reproduce OFF's original
-  verified 15,000-match threshold at OFF's real ~4.66M-row scale, but meaningful at a
-  different catalog's scale too) rather than just suggesting it, since the mock can't
-  reason about breadth the way a real LLM should. There's deliberately no equivalent
-  hard rejection for FNDDS — it's only ~5.4K rows total, so even a broad FNDDS keyword
-  isn't a memory risk, and applying the same bar there only throws away good keywords
-  (e.g. "cooked", "canned") for no safety benefit.
+  — each side's catalog size, plus its most common catalog-wide terms. The system
+  prompt tells the LLM not to propose any of these terms as a standalone keyword,
+  unless the term is the block's own name. For the catalog side, `llm/mock.py` also
+  *enforces* this rule as a hard rejection, instead of only suggesting it, since the
+  mock cannot judge keyword breadth the way a real LLM can. The rejection threshold is
+  `profiling.generic_term_min_doc_count("catalog")`. This is a *fraction* of catalog
+  size, not a fixed number. Its value is set to match OFF's original, checked
+  threshold of 15,000 matches, at OFF's real scale of about 4.66 million rows. Because
+  it is a fraction, it stays meaningful if a different catalog has a different row
+  count. There is no matching hard rejection for FNDDS. FNDDS has only about 5,400
+  rows total, so even a broad FNDDS keyword is not a memory risk. Applying the same
+  rule to FNDDS would only throw away good keywords (for example, "cooked" or
+  "canned") for no safety gain.
 - **Matching attributes** (`attributes/agent_loop.py`): each round's prompt includes
-  `field_stats` — the most common real values of each side's categorical fields
-  (OFF's `categories_tags`/`brands`, FNDDS's WWEIA category) *within this block's
-  population*, so a proposed categorical attribute (e.g. `bean_type`'s categories) can
-  be grounded in values that actually occur rather than invented from world knowledge.
+  `field_stats` — the most common real values of each side's category fields (OFF's
+  `categories_tags` and `brands`; FNDDS's WWEIA category), counted only within this
+  block's own records. A proposed category attribute (for example, `bean_type`'s
+  categories) can then be based on values that really occur, instead of values
+  invented from general world knowledge.
 
-`data/profiling/` is derived data (gitignored, like `data/blocks/` etc.) — rebuild with
-`uv run scripts/03_build_fdc_db.py` or `uv run python -m agentic_matching.profiling`.
+`data/profiling/` holds derived data. Like `data/blocks/`, it is not checked into git.
+Rebuild it with `uv run scripts/03_build_fdc_db.py`, or with
+`uv run python -m agentic_matching.profiling`.
 
-## Structured category-based blocking (not just free-text keywords)
+## Structured category-based blocking: not just free-text keywords
 
-Free-text keyword matching against FNDDS's blob of description + WWEIA category +
-"Additional Description" text turned out to be badly exploitable: FNDDS's
-`additional_description` field is full of boilerplate variant-annotations ("all
-flavors", "multigrain, whole grain, whole wheat") shared across many unrelated food
-categories, and even a keyword mined from clean description text (e.g. "fruit",
-"whole", "plain") independently recurs in countless other foods' own descriptions too
-(fruit salad, whole wheat muffins, plain pretzels). Concretely, on this project's own
-data: the yogurt block's FNDDS side was **1,176 records, of which 1,114 (95%) were not
-yogurt at all** — chicken, coffee, pasta, tea, sandwiches — all pulled in by "flavors"/
-"fruit"/"plain"/"whole" matching boilerplate annotation text having nothing to do with
-the food's actual identity. OFF had the same failure mode from a single mined keyword
-("almond" alone pulled in "Milk Chocolate With Caramelized Almonds").
+Free-text keyword matching against FNDDS's blob of description, WWEIA category, and
+"Additional Description" text turned out to be easy to trip up. FNDDS's
+`additional_description` field is full of stock phrases ("all flavors", "multigrain,
+whole grain, whole wheat") shared across many unrelated food categories. Even a
+keyword taken from clean description text (for example, "fruit", "whole", "plain")
+often occurs, on its own, in many other foods' descriptions too (fruit salad, whole
+wheat muffins, plain pretzels). Real case, from this project's own data: the yogurt
+block's FNDDS side held **1,176 records, and 1,114 of them (95%) were not yogurt at
+all** — chicken, coffee, pasta, tea, sandwiches. All of these were pulled in because
+"flavors," "fruit," "plain," or "whole" matched stock annotation text with nothing to
+do with the food's real identity. OFF showed the same failure from a single mined
+keyword: "almond" alone pulled in "Milk Chocolate With Caramelized Almonds."
 
-Both datasets actually carry clean, human-curated categorical labels for exactly this
-kind of thing — FNDDS's WWEIA food category (e.g. "Yogurt, regular", "Yogurt, Greek")
-and OFF's `categories_tags` (e.g. `en:yogurts`) — so a blocking rule can now specify
-`"categories"` per side (`blocking/rules.py`), OR'd with the keyword predicate:
-FNDDS always matches by exact `wweia_food_category_description` equality
-(`category_kind="exact"`), the catalog side by whatever `ACTIVE_CATALOG_SOURCE.
-category_kind` says (OFF's `categories_tags` is `"array_contains"`, since it's an
-array of tags, not a single value). `blocking/agent_loop.py::_category_options` surfaces
-the real category values seen among records already plausibly in the block (same
-seed-term-filtered population used for keyword-mining samples) as `category_options` in
-the prompt, so the LLM (or mock) picks from real values rather than inventing category
-names. The FNDDS-side keyword match is also now scoped to the raw `description` column
-only (not the boilerplate-laden blob) as a second, complementary fix.
+Both datasets carry clean, human-written category labels for exactly this kind of
+problem: FNDDS's WWEIA food category (for example, "Yogurt, regular" or "Yogurt,
+Greek"), and OFF's `categories_tags` (for example, `en:yogurts`). Because of this, a
+blocking rule can now name `"categories"` for each side (`blocking/rules.py`), joined
+with the keyword predicate. FNDDS always matches by exact equality on
+`wweia_food_category_description` (`category_kind="exact"`). The catalog side matches
+using whatever kind `ACTIVE_CATALOG_SOURCE.category_kind` names — OFF's
+`categories_tags` uses `"array_contains"`, since it holds a list of tags, not one
+value. `blocking/agent_loop.py::_category_options` finds the real category values seen
+among records already likely to belong to the block. This uses the same seed-term
+filter as the keyword-mining samples. These real values are shown to the LLM (or the
+mock) as `category_options`, so it picks from real values instead of inventing
+category names. The FNDDS-side keyword match is now also limited to the raw
+`description` column only, not the stock-phrase-heavy blob. This is a second,
+separate fix.
 
-`llm/mock.py` goes one step further: when a clean matching category is found for a
-side, it **skips speculative keyword mining entirely** for that side and only proposes
-the seed vocabulary + the category — this mock has no way to tell "whole" (bad, matches
-unrelated foods) apart from "greek" (good, block-specific) the way a real LLM's world
-knowledge could, so when a reliable structured signal exists, trusting it beats
-guessing. Net result on this project's data: yogurt's FNDDS side went from 1,176
-records (95% wrong) to **61 records, 0 wrong**; beans went from 908 to 188, and the 26
-"non-bean-worded" survivors are legitimate legume-family foods (chickpeas, lentils,
-split peas) correctly captured via the "Beans, peas, legumes" WWEIA category — genuine
-recall, not noise. A real LLM should be able to keep mining keywords selectively
-alongside categories (recognizing which mined words are block-specific vs. generic)
-rather than switching mining off entirely; the mock's all-or-nothing rule is a
-known simplification.
+`llm/mock.py` takes this one step further. When it finds a clean matching category for
+a side, it **skips keyword guessing entirely** for that side. It proposes only the
+seed vocabulary plus the category. The mock has no way to tell a bad general word
+("whole," which matches unrelated foods) apart from a good, block-specific word
+("greek"), the way a real LLM's world knowledge could. So when a reliable structured
+signal exists, the mock trusts it over guessing. Result, on this project's real data:
+yogurt's FNDDS side went from 1,176 records (95% wrong) to **61 records, 0 wrong**.
+Beans went from 908 records to 188. The 26 records in that beans block with no "bean"
+word in them are real legume foods (chickpeas, lentils, split peas), correctly kept by
+the "Beans, peas, legumes" WWEIA category. This is real recall, not noise. A real LLM
+should be able to keep mining keywords selectively alongside categories — telling
+apart a block-specific mined word from a general one — instead of switching off
+keyword mining entirely. The mock's all-or-nothing rule is a known simplification.
 
-Note the calibration-proxy metrics (pair completeness) can't fully reflect this: Branded
-Foods (the FNDDS-side text stand-in for calibration, see below) has no WWEIA-equivalent
-categorization, so the FNDDS-side category predicate can't be evaluated against that
-proxy (`blocking/metrics.py::pair_completeness` passes `category_col=None` for FNDDS
-accordingly). The precision win above was confirmed by direct inspection of the
-materialized block, not by the automatic metric — exactly the kind of thing the
-"plausibility spot-check" review step (see `PLAN.md`) exists to catch.
+Note: the calibration-proxy metrics (pair completeness) cannot fully show this gain.
+Branded Foods (the FNDDS-side text stand-in used for calibration, see below) has no
+WWEIA-style category field, so the FNDDS-side category rule cannot be checked against
+that proxy (`blocking/metrics.py::pair_completeness` passes `category_col=None` for
+FNDDS for this reason). The precision gain described above was confirmed by looking
+directly at the materialized block, not by the automatic metric. This is exactly the
+kind of gap the "plausibility spot-check" review step (see `PLAN.md`) exists to catch.
 
 ## Mining candidate matching attributes from the block itself
 
-For a from-scratch block (no `seed_rules.SEED_ATTRIBUTES` entry, e.g. `beans`), the
-initial round previously proposed attributes purely from world knowledge (or, for the
-mock, a hand-curated list) — no mechanism actually *selected* them from the data.
-`attributes/agent_loop.py::_candidate_boolean_terms` mines the block's own free text
-(FNDDS `description`, OFF `search_text`) for tokens that split its population into a
-meaningful minority/majority **on at least one side** (a `min_frac`-`max_frac` band —
-near-0% or near-100% doesn't discriminate anything), ranked by the *minimum* of the two
-sides' fractions so terms with corroborating signal on both sides (real cross-dataset
-concepts, e.g. "meat") outrank one-sided noise (FNDDS's beans block also catches some
-unrelated "mixed dish" categories — pasta, potato, sandwich dishes that happen to
-mention beans — whose incidental vocabulary would otherwise dominate a pure-frequency
-ranking). Passed into every round's prompt as `candidate_terms`.
+For a from-scratch block (one with no `seed_rules.SEED_ATTRIBUTES` entry, for example
+`beans`), the first round used to propose attributes purely from general knowledge —
+or, for the mock, from a hand-written list. Nothing actually *chose* attributes from
+the real data. `attributes/agent_loop.py::_candidate_boolean_terms` now mines the
+block's own free text (FNDDS `description`, catalog `search_text`) for words that
+split the block's records into a real minority and majority, on at least one side (a
+`min_frac`-to-`max_frac` band — a word near 0% or near 100% tells you nothing). Terms
+are ranked by the *lower* of the two sides' match fractions. This way, a term with
+real signal on both sides (a true cross-dataset concept, for example "meat") ranks
+above a term with signal on only one side. (FNDDS's beans block also catches some
+unrelated "mixed dish" records — pasta, potato, and sandwich dishes that happen to
+mention beans. Their own vocabulary would otherwise dominate a plain frequency count.)
+Every round's prompt includes this list, as `candidate_terms`.
 
-`llm/mock.py` now uses this instead of a hand-curated boolean attribute list: for a
-from-scratch block, it combines a small hand-curated *categorical* exception
-(`_CATEGORICAL_EXCEPTIONS` — currently just `beans`' `bean_type`/`sodium_level`, kept
-because grouping domain synonyms like "garbanzo"/"chickpea"/"pois chiche" into one
-category is exactly the kind of reasoning frequency-counting can't do) with boolean
-attributes built directly from the top mined `candidate_terms` (e.g. `has_meat`,
-`has_canned`). Redundant mined attributes still get caught by the existing
-`metrics.py` step in a later round exactly as if the LLM had proposed them
-(verified: mining once surfaced `has_black`, which is redundant with `bean_type`'s
-"black" category — flagged at Cramér's V 0.972 and dropped in round 1, unprompted).
+`llm/mock.py` now uses this list instead of a hand-written boolean attribute list. For
+a from-scratch block, it combines a small hand-written *category* exception list
+(`_CATEGORICAL_EXCEPTIONS` — today, only `beans`' `bean_type` and `sodium_level`) with
+boolean attributes built directly from the top mined `candidate_terms` (for example,
+`has_meat`, `has_canned`). The exception list stays hand-written because grouping
+synonyms across languages — "garbanzo," "chickpea," "pois chiche" — into one category
+needs reasoning that plain word-counting cannot do. A later round's `metrics.py` check
+still catches a mined attribute that turns out to be redundant, the same way it would
+catch one the LLM proposed directly. Real case: mining once surfaced `has_black`,
+which repeats `bean_type`'s "black" category. The check flagged it at a Cramér's V of
+0.972 and dropped it in round 1, with no extra prompting needed.
 
-**Limitations honestly worth knowing:** a single mined token only catches literal
-occurrences of that word — `has_meat` (mined) only fires on "meat" itself, while a
-hand-written `has_meat` attribute could list "pork"/"beef"/"bacon"/"sausage"/"ham" as
-synonyms, catching far more records. Mining also can't guarantee every intuitively
-useful attribute surfaces — in this project's actual data, `rice` mined at rank ~16
-(just outside the mock's top-6 cutoff) because its OFF-side signal in this block
-happened to be weaker (~1.2%) than `meat`'s (~5.3%), so `with_rice` doesn't currently
-appear via mining alone. **This is exactly the gap a real LLM should close** (see below)
-— it isn't limited to literal substring co-occurrence and can reason "rice matters for
-a beans-and-rice mixed dish" the way it could reason "porc" means "pork".
+**Real limits worth knowing:** a single mined word only catches that exact word.
+`has_meat`, when mined, fires only on the word "meat" itself. A hand-written
+`has_meat` attribute could list "pork," "beef," "bacon," "sausage," and "ham" as
+synonyms, and so catch far more records. Mining also cannot guarantee that every
+useful attribute is found. In this project's real data, the word `rice` ranked about
+16th (just outside the mock's top-6 cutoff), because its signal on the OFF side of
+this block was weaker (about 1.2%) than `meat`'s (about 5.3%). Because of this,
+`with_rice` does not currently appear from mining alone. **This is exactly the kind of
+gap a real LLM should close** (see below). A real LLM is not limited to counting exact
+word matches. It can reason that "rice matters for a beans-and-rice mixed dish," the
+same way it can reason that "porc" means "pork."
 
-### What changes with a real LLM instead of the mock?
+### What changes when a real LLM replaces the mock?
 
-**Nothing else in the codebase.** `corpus_stats`, `field_stats`, and `candidate_terms`
-are assembled by `blocking/agent_loop.py`/`attributes/agent_loop.py` and handed to
-`ChatClient.complete_json` as plain prompt text (see `llm/prompts.py`) — the same
-payload reaches `llm/mock.py` and a real Ollama-backed `llm/client.py` model alike.
-Switching between them is the one-variable change described below; no prompt,
-agent-loop, correlation-check, or splink code needs to change. What *does* change is
-quality: a real LLM sees the same `candidate_terms` grounding but can go beyond literal
-substring frequency — proposing `with_rice` even though "rice" mined at a middling rank,
-recognizing "pork"/"beef"/"bacon" belong under `has_meat`, and recognizing
-cross-language synonyms ("porc", "riz") the mock's mining explicitly disclaims it can't
-do.
+**Nothing else in the code.** `corpus_stats`, `field_stats`, and `candidate_terms` are
+built by `blocking/agent_loop.py` and `attributes/agent_loop.py`. They are sent to
+`ChatClient.complete_json` as plain prompt text (see `llm/prompts.py`). The same
+payload reaches `llm/mock.py` and a real Ollama-backed `llm/client.py` model in the
+same form. Switching between them is a one-variable change (see "LLM backend" below).
+No prompt, agent-loop, correlation-check, or splink code needs to change. What *does*
+change is quality. A real LLM sees the same `candidate_terms` grounding, but it is not
+limited to counting exact words. It can propose `with_rice` even though "rice" ranked
+in the middle of the list. It can recognize that "pork," "beef," and "bacon" all
+belong under `has_meat`. It can recognize matching words across languages ("porc,"
+"riz"), which the mock's own docs say it cannot do.
 
 ## LLM backend
 
-Every agent-loop script calls `get_llm_client()`, selected by `LLM_DEVICE`.
+Every agent-loop script calls `get_llm_client()`. The `LLM_DEVICE` setting picks the
+backend.
 
-- **`LLM_DEVICE=ollama` (default)**: talks to a local or remote
-  [Ollama](https://ollama.com/download) server (a single installer, no manual build
-  step) over its OpenAI-compatible `/v1` API. `uv run python -m agentic_matching.llm.server`
-  starts (or attaches to) it in the foreground — run it in its own terminal before
-  `scripts/05-09`, which only ever *talk* to a server, never start one themselves.
-  `llm/server.py::OllamaServerManager` handles two things worth knowing: (1) Ollama is
-  commonly already running as a persistent background service (the official installer
-  sets up a systemd service on Linux) — it detects an already-reachable server and
-  reuses it instead of erroring or double-launching, only spawning its own `ollama
-  serve` if nothing answers yet, and only stops a server it started itself; (2) Ollama
-  needs a model *pulled* before it can serve it, so `start()` runs `ollama pull <model>`
-  automatically (a fast no-op if already present). Defaults to `LLM_MODEL=qwen2.5:1.5b`
-  and `LLM_PORT=11434` (Ollama's own conventions) unless you override them in `.env`.
-  Requires a reasonably recent Ollama version for its OpenAI-compatible `/v1` API
-  (including `response_format` JSON-mode support, which `llm/client.py` relies on) --
-  verified against a real Ollama install over the course of this project's development.
+- **`LLM_DEVICE=ollama` (the default)**: talks to a local or remote
+  [Ollama](https://ollama.com/download) server (one installer, no manual build steps)
+  over its OpenAI-compatible `/v1` API. Run
+  `uv run python -m agentic_matching.llm.server` in its own terminal, before
+  `scripts/05` through `09`. This starts the server, or connects to one already
+  running. The scripts only ever *talk* to a server; they never start one themselves.
+  `llm/server.py::OllamaServerManager` handles two things worth knowing. First, Ollama
+  is often already running as a background service (the official installer sets this
+  up on Linux). The manager checks for a server that already answers, and uses it
+  instead of erroring out or starting a second one. It only starts its own `ollama
+  serve` process if nothing answers yet, and it only stops a server it started itself.
+  Second, Ollama needs a model *pulled* before it can serve it, so `start()` runs
+  `ollama pull <model>` for you. This is a fast no-op if the model is already present.
+  The defaults are `LLM_MODEL=qwen2.5:1.5b` and `LLM_PORT=11434` (Ollama's own
+  defaults); override them in `.env` if you need to. You need a fairly recent Ollama
+  version for its OpenAI-compatible `/v1` API, including `response_format` JSON-mode
+  support, which `llm/client.py` needs. This was checked against a real Ollama
+  install during this project's development.
 - **`LLM_DEVICE=databricks`**: a Databricks Model Serving pay-per-token endpoint.
-  Credentials come from the same `DATABRICKS_HOST`/`DATABRICKS_TOKEN` env var names the
-  Databricks CLI/SDK themselves use (not duplicated under an `LLM_`-prefixed name);
-  `DATABRICKS_LLM_ENDPOINT` is either a bare serving-endpoint name or the full
-  invocations URL copy-pasted from the Databricks UI's "Query endpoint" page — see
-  `.env.example`. Nothing to start/manage — it's already running as a cloud service.
-  Every call is a direct HTTP POST (not the `openai` SDK's automatic URL construction)
-  to that endpoint's own literal `.../serving-endpoints/<name>/invocations` URL — see
-  `llm/client.py`'s module docstring for why: Databricks' documented shared-gateway
-  pattern (routing by a `model` field in the request body) returned an HTML login-page
-  redirect for a real named endpoint on a real workspace, while the literal per-endpoint
-  URL returned a real API response; the token also needs `model-serving`/
-  `model-serving-inference` scope, which a scoped OAuth/service-principal token may not
-  have by default even though a full personal access token typically does. Verified
-  end-to-end against a real endpoint (`databricks-meta-llama-3-3-70b-instruct`).
-  **This is a paid endpoint** — every LLM call in every agent loop (many per block run)
-  costs real money while this is set; switch back to `LLM_DEVICE=ollama` when you're
-  not deliberately using it.
-- `LLM_DEVICE=mock`: offline, no server required. `llm/mock.py` implements the same
-  `ChatClient` interface with deterministic keyword-mining heuristics, enough to
-  exercise/test/demo the full pipeline end-to-end without any LLM installed.
-- Set `LLM_BASE_URL` instead to point at an already-running OpenAI-compatible server
-  (e.g. a remote host, or a separately-managed Ollama instance) rather than launching
-  one locally -- doesn't apply to `LLM_DEVICE=databricks`, which always uses its own
-  literal invocations URL regardless (see above).
+  Credentials come from the same `DATABRICKS_HOST` and `DATABRICKS_TOKEN` environment
+  variable names the Databricks CLI and SDK use — not a separate, `LLM_`-prefixed
+  copy. `DATABRICKS_LLM_ENDPOINT` can be either a bare serving-endpoint name, or the
+  full invocations URL you can copy from the Databricks UI's "Query endpoint" page
+  (see `.env.example`). There is nothing to start or manage; it already runs as a
+  cloud service. Every call is a direct HTTP POST — not the `openai` SDK's normal URL
+  building — to that endpoint's own literal
+  `.../serving-endpoints/<name>/invocations` URL. See `llm/client.py`'s module
+  docstring for why: Databricks' documented shared-gateway pattern (routing by a
+  `model` field in the request body) returned an HTML login-page redirect for a real
+  named endpoint on a real workspace, while the literal per-endpoint URL returned a
+  real API response. The token also needs `model-serving` or
+  `model-serving-inference` scope, which a scoped OAuth or service-principal token may
+  not have by default, even though a full personal access token usually does. This was
+  checked end-to-end against a real endpoint
+  (`databricks-meta-llama-3-3-70b-instruct`). **This is a paid endpoint.** Every LLM
+  call in every agent loop costs real money while `LLM_DEVICE=databricks` is set, and
+  a run makes many calls. Switch back to `LLM_DEVICE=ollama` when you are not using it
+  on purpose.
+- `LLM_DEVICE=mock`: works offline, with no server needed. `llm/mock.py` implements
+  the same `ChatClient` interface, using fixed keyword-mining rules. This is enough to
+  run, test, or demo the full pipeline end to end, with no LLM installed.
+- Set `LLM_BASE_URL` instead, to point at a server that is already running (a remote
+  host, or a separately managed Ollama instance), instead of starting one locally.
+  This setting does not apply to `LLM_DEVICE=databricks`, which always uses its own
+  literal invocations URL (see above).
 
-## Known constraints at this project's data scale
+## Known limits at this project's data scale
 
-The pipeline pre-filters to per-block subsets
+The pipeline filters each block down to its own small subset of records first
 (`data/blocks/<block>_{fndds,catalog}.parquet`, written once by
-`scripts/05_run_blocking_agent.py`) before splink ever runs, so splink
-never touches the full ~4.66M-row OFF table directly — but the blocks are still
-asymmetric (hundreds to low thousands of FNDDS records vs. tens of thousands of OFF
-records), and a few things below turned out to matter at that scale. All are fixed, but
-worth knowing if this pipeline is extended (larger blocks, more attributes, etc.), and
-worth double-checking on a memory-constrained machine in particular:
+`scripts/05_run_blocking_agent.py`), before splink ever runs. Because of this, splink
+never touches the full roughly 4.66-million-row OFF table directly. Even so, each
+block is still uneven in size: hundreds to a few thousand FNDDS records, against tens
+of thousands of catalog records. A few things below turned out to matter at that
+scale. All are fixed today, but are worth knowing if this pipeline grows (larger
+blocks, more attributes, and so on). Check these first on a machine with limited
+memory:
 
-- **EM blocking on a skewed attribute alone.** `linking/splink_model.py`'s EM passes
-  deliberately combine any attribute column with the search-text prefix condition
-  (`block_on(col, "substr(l.search_text, 1, 4)")`) rather than blocking on the attribute
-  alone — blocking on a skewed boolean attribute by itself (e.g. `is_greek`, False for
-  the vast majority of records) pairs up tens of millions of records and was what
-  originally exhausted memory during development.
-- **Uncapped exhaustive holdout scoring.** `linking/evaluate.py`'s holdout scoring uses
-  an exhaustive (`1=1`) blocking rule, safe only because the holdout sample size is
-  capped (`max_holdout_positives`, default 500) — Branded Foods republishes many rows
-  per GTIN, so an uncapped category holdout can be tens of thousands of rows, and an
-  exhaustive cross join at that scale is the other thing that exhausted memory during
-  development.
-- **Nondeterministic keyword-mining samples.** `blocking/agent_loop.py::_sample_texts`
-  now `ORDER BY fdc_id`/`code` explicitly. Without it, `LIMIT` alone left row order (and
-  therefore which records get sampled for keyword mining, mock or real LLM) up to
-  DuckDB's query plan — observed to swing a block's OFF-side size by 2-3x across runs
-  of identical code.
-- **Overly-broad mined keywords.** A plain stopword list doesn't generalize here (new
-  generic words like `protein`, `rice`, `black`, `green` kept slipping through and each
-  independently matched 20K-65K OFF records), and a plain *relative* frequency threshold
-  is too loose at OFF's ~4.66M-row scale (even a "rare" token implies a large absolute
-  match count) — see the "Corpus profiling" section above for the actual fix
-  (`profiling.py` + `corpus_stats` in the prompt + a hard rejection in `llm/mock.py` for
-  the catalog side). This only *enforces* on the mock; a real LLM should reason about
-  keyword breadth on its own given the same `corpus_stats`, but if a proposed rule still
-  produces an outsized block, check `data/blocks/<block>_catalog.parquet`'s row count
-  before running the linking stage.
+- **EM blocking on one skewed attribute.** `linking/splink_model.py`'s EM training
+  passes always combine an attribute column with the search-text prefix condition
+  (`block_on(col, "substr(l.search_text, 1, 4)")`). They never block on the attribute
+  alone. Blocking on a skewed boolean attribute alone (for example, `is_greek`, which
+  is False for almost every record) pairs up tens of millions of records. This was the
+  original cause of memory exhaustion during development.
+- **Uncapped, exhaustive holdout scoring.** `linking/evaluate.py`'s holdout scoring
+  uses an exhaustive (`1=1`) blocking rule. This is safe only because the holdout
+  sample size has a cap (`max_holdout_positives`, default 500). Branded Foods
+  publishes the same product many times, once per row, under the same GTIN. Without
+  the cap, an uncapped category holdout can reach tens of thousands of rows, and an
+  exhaustive cross join at that size was the other original cause of memory
+  exhaustion.
+- **Keyword-mining samples used to be nondeterministic.**
+  `blocking/agent_loop.py::_sample_texts` now sorts explicitly, by `fdc_id` or `code`.
+  Without this sort, `LIMIT` alone left row order — and so which records got sampled
+  for keyword mining, by the mock or by a real LLM — up to DuckDB's own query plan.
+  This was seen to swing a block's catalog-side size by 2 to 3 times, across runs of
+  the exact same code.
+- **Mined keywords used to be too broad.** A plain stopword list does not solve this:
+  new general words such as `protein`, `rice`, `black`, and `green` kept slipping
+  through, and each one independently matched 20,000 to 65,000 OFF records on its own.
+  A plain *relative* frequency threshold is also too loose at OFF's roughly
+  4.66-million-row scale, since even a "rare" word, by percentage, can still match a
+  large number of records. See "Corpus profiling" above for the real fix:
+  `profiling.py`, the `corpus_stats` field in the prompt, and a hard rejection rule in
+  `llm/mock.py` for the catalog side. This rejection rule only *forces* the outcome
+  for the mock. A real LLM should judge keyword breadth on its own, from the same
+  `corpus_stats`. But if a proposed rule still produces an unusually large block,
+  check `data/blocks/<block>_catalog.parquet`'s row count before you run the linking
+  stage.
 
-If `scripts/07_...` still runs long or memory climbs unbounded, stop it and check
-`data/blocks/<block>_catalog.parquet` row counts — a much larger catalog-side block than
-the ones checked in here may need tighter blocking before EM.
+If `scripts/07_...` runs for a long time, or memory use keeps climbing, stop it and
+check `data/blocks/<block>_catalog.parquet`'s row count. A much larger catalog-side
+block than the ones checked here may need a tighter blocking rule before you run EM
+training.
 
-- **TODO: linking holdout exclusion is seed-rule-only, not rule-actual.**
-  `linking/evaluate.py::_load_block_holdout` filters out known false-positive
-  categories from the calibration holdout using `blocking/seed_rules.json`'s
-  `exclude_keywords` — but a block with no seed entry (or a seed whose excludes
-  haven't caught up with what the block's real, currently-materialized rule has
-  since learned) silently gets less exclusion applied than that rule would give it.
-  Verified real case: `beans` had no seed entry at all for most of this project's
-  history, and 162 real jelly-bean-candy rows (`branded_food_category=Candy`, OFF tag
-  `en:jelly-beans`) polluted its holdout f1/attribute_discriminative_power/
-  holdout_error_examples calculations as a result — fixed for now by adding/
-  extending `beans`' seed entry with the excludes its own round-1 blocking rule had
-  already independently learned (`jelly`, `vanilla bean`, `protein powder`,
-  `crisps`), but this is a per-block patch, not a systemic fix: any future block
-  without a hand-curated seed (or whose seed drifts stale relative to its actual
-  rule) will hit the same silent gap. A more systemic fix — drawing holdout excludes
-  from the block's actual current/best rule instead of (or in addition to) the seed
-  — was deliberately deferred: that rule is itself LLM-proposed, so using it to
-  define the ground truth the same LLM's attribute revisions get scored against
-  risks a milder version of the exact circularity `blocking/metrics.py::
-  term_predicate_sql`'s docstring already avoids on the inclusion side (an overly
-  aggressive learned exclude list could shrink the holdout toward the cases the
-  current attributes already handle well, quietly inflating holdout f1 with the
-  model's own choices). It also needs a persisted canonical "final rule" artifact
-  for blocking, which doesn't exist today (unlike attributes'
-  `generated/<block>/latest.json`) — `blocking/agent_loop.py` picks a final rule
-  in-memory and never writes it out separately from the per-round artifacts.
+**TODO: the linking holdout's exclusion rule only uses the seed rule, not the block's
+real, current rule.** `linking/evaluate.py::_load_block_holdout` removes known
+false-positive categories from the calibration holdout, using the `exclude_keywords`
+field from `blocking/seed_rules.json`. A block with no seed entry — or a seed entry
+whose excludes have not caught up with what the block's real, current rule has since
+learned — silently gets less exclusion than its real rule would give it. Real case:
+`beans` had no seed entry at all for most of this project's history. As a result, 162
+real jelly-bean-candy rows (`branded_food_category=Candy`, OFF tag `en:jelly-beans`)
+polluted its holdout F1 score and its other holdout-based checks. The fix used so far:
+add and extend the `beans` seed entry with the excludes its own round-1 blocking rule
+had already found on its own (`jelly`, `vanilla bean`, `protein powder`, `crisps`).
+This is a fix for one block, not a fix for the whole system. Any future block with no
+hand-written seed — or one whose seed goes stale relative to its real rule — will hit
+the same silent gap. A more complete fix would build the holdout excludes from the
+block's real, current, best rule, instead of (or in addition to) the seed. This fix
+was deliberately left for later: that real rule is itself LLM-proposed, so using it to
+define the ground truth the same LLM's attribute revisions get scored against risks a
+smaller version of the same circularity problem `blocking/metrics.py::
+term_predicate_sql`'s docstring already avoids, on the inclusion side. (An
+over-aggressive learned exclude list could shrink the holdout down toward the cases
+the current attributes already handle well, quietly inflating holdout F1 with the
+model's own past choices.) This fix would also need a saved, canonical "final rule"
+file for blocking, which does not exist today — unlike attributes'
+`generated/<block>/latest.json`. `blocking/agent_loop.py` picks a final rule in
+memory, and never saves it separately from the per-round files.
+
+## Calibration data quality: description similarity check
+
+`calibration.py` builds the Branded↔OFF gold-pair set by matching normalized UPC/GTIN
+codes only. A shared barcode is strong evidence of a real match, but not proof —
+barcode reuse, a relisted product, or a data-entry error on either side could still
+produce a "gold" pair whose two descriptions do not actually agree.
+
+To make this risk visible, every gold pair now carries a `description_similarity`
+score: a word-level Jaccard similarity between the Branded description and the OFF
+product name, computed directly in DuckDB (see `calibration.py::
+_description_similarity_sql`). This score is **not** used to filter the calibration
+set automatically. Checked directly against this project's real data (1,777,551 gold
+pairs; mean similarity 0.78, median 1.0), the small tail of zero-similarity pairs
+(40,741 pairs, 2.3%) turned out to be a mix, not mostly bad data: real matches in two
+languages, a real brand name that shares no words with a generic description, and
+Branded descriptions that name only the packaging ("Aluminum Cans") rather than the
+product. A blind cutoff would have thrown out real matches along with bad ones. So the
+score is only a signal for human review, surfaced two ways:
+
+- `data/calibration/sme_spot_check_sample.csv` — the existing stratified SME sample,
+  now including each pair's `description_similarity`.
+- `data/calibration/low_similarity_examples.csv` — the 200 gold pairs with the lowest
+  `description_similarity` score, worst first, written by
+  `calibration.py::export_low_similarity_examples`. This file exists for a human to
+  check the real riskiest-looking pairs directly, rather than a random sample.
 
 ## Testing
 
